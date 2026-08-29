@@ -86,12 +86,9 @@ function GlassCard({
   delay?: number;
 }) {
   return (
-    <motion.div
-      variants={fadeUp}
-      className={`glass glass-hover rounded-3xl p-6 md:p-8 ${className}`}
-    >
+    <div className={`glass glass-hover rounded-3xl p-6 md:p-8 ${className}`}>
       {children}
-    </motion.div>
+    </div>
   );
 }
 
@@ -331,16 +328,12 @@ export default function Home() {
   if (!selectedUser && users.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center p-10">
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass rounded-3xl p-10 max-w-md w-full text-center space-y-5"
-        >
+        <div className="glass rounded-3xl p-10 max-w-md w-full text-center space-y-5">
           <div className="mx-auto w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
             <Wallet className="w-7 h-7 text-emerald-400" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold">Loading wallet</h2>
+            <h2 className="text-xl font-semibold text-white">Loading wallet</h2>
             <p className="text-slate-400 text-sm mt-1">Connecting to the secure ledger…</p>
           </div>
           <div className="space-y-2">
@@ -351,24 +344,16 @@ export default function Home() {
             <Loader2 className="w-3 h-3 animate-spin" />
             <span>If this takes more than 30s, run the backend seed endpoint.</span>
           </div>
-        </motion.div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen font-sans p-6 md:p-12">
-      <motion.div
-        className="max-w-5xl mx-auto space-y-8"
-        variants={stagger}
-        initial="hidden"
-        animate="show"
-      >
+      <div className="max-w-5xl mx-auto space-y-8">
         {/* ---------- Header / Mock Auth ---------- */}
-        <motion.header
-          variants={fadeUp}
-          className="glass rounded-2xl px-6 py-5 flex justify-between items-center"
-        >
+        <header className="glass rounded-2xl px-6 py-5 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-emerald-400" />
@@ -401,7 +386,7 @@ export default function Home() {
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">▾</span>
             </div>
           </div>
-        </motion.header>
+        </header>
 
         {/* ---------- Toast ---------- */}
         <AnimatePresence>
@@ -440,15 +425,12 @@ export default function Home() {
                 <Sparkles className="w-3 h-3" /> Live
               </StatBadge>
             </div>
-            <motion.h2
+            <h2
               key={selectedUser?.balance}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-              className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-slate-50"
+              className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white"
             >
               {selectedUser ? formatCurrency(selectedUser.balance) : "---"}
-            </motion.h2>
+            </h2>
             <div className="mt-10 pt-6 border-t border-slate-700/50 flex justify-between items-end">
               <div className="space-y-1">
                 <p className="text-slate-500 text-xs uppercase tracking-wider">Account Holder</p>
@@ -486,13 +468,8 @@ export default function Home() {
               ) : (
                 <AnimatePresence initial={false}>
                   {requests.map(req => (
-                    <motion.div
+                    <div
                       key={req.id}
-                      layout
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 8, height: 0 }}
-                      transition={{ duration: 0.25 }}
                       className="bg-slate-800/40 border border-slate-700/60 hover:border-emerald-500/40 rounded-2xl p-4 flex justify-between items-center transition-colors"
                     >
                       <div className="space-y-0.5">
@@ -509,7 +486,7 @@ export default function Home() {
                       >
                         Pay
                       </button>
-                    </motion.div>
+                    </div>
                   ))}
                 </AnimatePresence>
               )}
@@ -622,11 +599,10 @@ export default function Home() {
                 {users.filter(u => u.id !== selectedUser?.id).map(u => {
                   const active = splitRecipientIds.includes(u.id);
                   return (
-                    <motion.button
+                    <button
                       key={u.id}
                       type="button"
                       onClick={() => toggleSplitRecipient(u.id)}
-                      whileTap={{ scale: 0.96 }}
                       title={u.phone || undefined}
                       className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
                         active
@@ -640,7 +616,7 @@ export default function Home() {
                           {u.phone}
                         </span>
                       )}
-                    </motion.button>
+                    </button>
                   );
                 })}
               </div>
@@ -661,16 +637,12 @@ export default function Home() {
               />
             </div>
             {splitPreview && (
-              <motion.div
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-violet-500/10 border border-violet-500/30 rounded-xl p-4 text-sm text-violet-100"
-              >
+              <div className="bg-violet-500/10 border border-violet-500/30 rounded-xl p-4 text-sm text-violet-100">
                 Each person owes <span className="font-bold tabular-nums">{formatCurrency(splitPreview.share)}</span>
                 {splitPreview.remainder > 0 && (
                   <> ({splitPreview.remainder} extra cent{splitPreview.remainder === 1 ? '' : 's'} go to the first recipient so the ledger stays balanced)</>
                 )}.
-              </motion.div>
+              </div>
             )}
             <button
               disabled={loading || splitRecipientIds.length === 0}
@@ -711,11 +683,8 @@ export default function Home() {
                   const color = outgoing ? 'text-rose-400' : 'text-emerald-400';
                   const arrow = outgoing ? '→' : '←';
                   return (
-                    <motion.div
+                    <div
                       key={tx.id}
-                      layout
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0, transition: { delay: i * 0.02 } }}
                       className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0"
                     >
                       <div className="flex items-center gap-4 min-w-0">
@@ -748,7 +717,7 @@ export default function Home() {
                       <p className={`font-bold tabular-nums text-base ${color}`}>
                         {sign}{formatCurrency(tx.amount)}
                       </p>
-                    </motion.div>
+                    </div>
                   );
                 })}
               </AnimatePresence>
@@ -756,13 +725,10 @@ export default function Home() {
           )}
         </GlassCard>
 
-        <motion.footer
-          variants={fadeUp}
-          className="text-center text-xs text-slate-600 pt-4 pb-2"
-        >
+        <footer className="text-center text-xs text-slate-600 pt-4 pb-2">
           PSTU IT Carnival 2026 · Free-tier stack · Vercel + Render + Neon/Postgres
-        </motion.footer>
-      </motion.div>
+        </footer>
+      </div>
     </div>
   );
 }
