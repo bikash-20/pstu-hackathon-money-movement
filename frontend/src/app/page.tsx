@@ -1,26 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowRightLeft, HandCoins, CheckCircle, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRightLeft, HandCoins, CheckCircle, XCircle, Users } from "lucide-react";
 
 type User = { id: number; name: string; balance: number };
 type MoneyRequest = { id: number; amount: number; requester: { name: string } };
+type TransactionRow = {
+  id: number;
+  senderId: number;
+  receiverId: number;
+  amount: number;
+  status: string;
+  createdAt: string;
+  sender: { id: number; name: string };
+  receiver: { id: number; name: string };
+};
 
 let API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 if (API_URL.endsWith('/')) API_URL = API_URL.slice(0, -1);
 if (!API_URL.endsWith('/api')) API_URL += '/api';
 
 function formatCurrency(cents: number) {
-  return new Intl.NumberFormat("en-BD", {
-    style: "currency",
-    currency: "BDT",
+  // Intl.NumberFormat with currency: "BDT" falls back to the literal
+  // "BDT" prefix in most browsers because there is no native locale data
+  // for Bangladeshi Taka. The problem statement uses ৳, so we keep the
+  // Intl formatter only for digit grouping (thousands separators, locale-
+  // correct decimals) and prepend the ৳ symbol explicitly.
+  const number = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(cents / 100);
+  return `৳${number}`;
 }
 
 export default function Home() {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [requests, setRequests] = useState<MoneyRequest[]>([]);
+  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
 
   // Forms State
   const [sendTargetId, setSendTargetId] = useState("");
@@ -28,16 +45,32 @@ export default function Home() {
   const [reqTargetId, setReqTargetId] = useState("");
   const [reqAmount, setReqAmount] = useState("");
 
+  // Split Bill State
+  const [splitRecipientIds, setSplitRecipientIds] = useState<number[]>([]);
+  const [splitTotalAmount, setSplitTotalAmount] = useState("");
+
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Ping /api/health on mount to wake up the Render free-tier service
+    // before any real work is attempted. Fire-and-forget: failure here
+    // just means we'll retry when fetchUsers() runs a moment later.
+    fetch(`${API_URL}/health`).catch(() => {});
     fetchUsers();
   }, []);
 
   useEffect(() => {
     if (selectedUser) {
       fetchRequests(selectedUser.id);
+      fetchTransactions(selectedUser.id);
+    } else {
+      // Clear per-user state when no user is selected so a stale
+      // selection doesn't leak into a fresh session.
+      setRequests([]);
+      setTransactions([]);
+      setSplitRecipientIds([]);
+      setSplitTotalAmount("");
     }
   }, [selectedUser]);
 
@@ -64,12 +97,23 @@ export default function Home() {
     }
   };
 
+  const fetchTransactions = async (userId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/transactions/${userId}`);
+      const data = await res.json();
+      setTransactions(data);
+    } catch (e) {
+      console.error("Failed to fetch transactions");
+    }
+  };
+
   const refreshData = async () => {
     const latestUsers = await fetchUsers();
     if (selectedUser) {
       const updated = latestUsers.find(u => u.id === selectedUser.id);
       if (updated) setSelectedUser(updated);
       fetchRequests(selectedUser.id);
+      fetchTransactions(selectedUser.id);
     }
   };
 
@@ -161,6 +205,66 @@ export default function Home() {
         refreshData();
       } else {
         showMessage("error", data.error || "Payment failed");
+      }
+    } catch (e) {
+      showMessage("error", "Network error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleSplitRecipient = (id: number) => {
+    setSplitRecipientIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  // Even-split cents preview; mirrors backend remainder rule.
+  const splitPreview = useMemo(() => {
+    const total = parseFloat(splitTotalAmount);
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const totalCents = Math.round(total * 100);
+    const n = splitRecipientIds.length;
+    if (n === 0) return null;
+    const share = Math.floor(totalCents / n);
+    const remainder = totalCents - share * n;
+    return { share, remainder, totalCents, n };
+  }, [splitTotalAmount, splitRecipientIds]);
+
+  const handleSplitBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUser) return;
+    if (splitRecipientIds.length === 0) {
+      showMessage("error", "Pick at least one recipient to split with");
+      return;
+    }
+    const total = parseFloat(splitTotalAmount);
+    if (!Number.isFinite(total) || total <= 0) {
+      showMessage("error", "Enter a valid total amount");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/split`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          initiatorId: selectedUser.id,
+          recipientIds: splitRecipientIds,
+          totalAmount: Math.round(total * 100),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showMessage("success", `Split ${total} BDT across ${splitRecipientIds.length} people`);
+        setSplitTotalAmount("");
+        setSplitRecipientIds([]);
+        refreshData();
+      } else {
+        showMessage("error", data.error || "Split failed");
       }
     } catch (e) {
       showMessage("error", "Network error");
@@ -295,7 +399,7 @@ export default function Home() {
             <form onSubmit={handleRequestMoney} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">From</label>
-                <select 
+                <select
                   required
                   value={reqTargetId}
                   onChange={e => setReqTargetId(e.target.value)}
@@ -309,7 +413,7 @@ export default function Home() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount (BDT)</label>
-                <input 
+                <input
                   type="number" step="0.01" min="1" required
                   value={reqAmount} onChange={e => setReqAmount(e.target.value)}
                   className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500"
@@ -321,6 +425,106 @@ export default function Home() {
               </button>
             </form>
           </div>
+
+          {/* Split Bill (even split across multiple recipients, single atomic POST) */}
+          <div className="md:col-span-2 bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
+            <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <Users size={20} className="text-violet-500" /> Split Bill
+            </h3>
+            <form onSubmit={handleSplitBill} className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Split with</label>
+                <div className="flex flex-wrap gap-2">
+                  {users.filter(u => u.id !== selectedUser?.id).map(u => {
+                    const active = splitRecipientIds.includes(u.id);
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => toggleSplitRecipient(u.id)}
+                        className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                          active
+                            ? 'bg-violet-600 text-white border-violet-600'
+                            : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        {u.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  {splitRecipientIds.length === 0
+                    ? 'Tap one or more people to include in the split.'
+                    : `${splitRecipientIds.length} selected`}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Total amount (BDT)</label>
+                <input
+                  type="number" step="0.01" min="1" required
+                  value={splitTotalAmount}
+                  onChange={e => setSplitTotalAmount(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-violet-500"
+                  placeholder="e.g. 1500"
+                />
+              </div>
+              {splitPreview && (
+                <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-sm text-violet-900">
+                  Each person owes <span className="font-bold">{formatCurrency(splitPreview.share)}</span>
+                  {splitPreview.remainder > 0 && (
+                    <> ({splitPreview.remainder} extra cent{splitPreview.remainder === 1 ? '' : 's'} go to the first recipient so the ledger stays balanced)</>
+                  )}
+                  .
+                </div>
+              )}
+              <button
+                disabled={loading || splitRecipientIds.length === 0}
+                className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50"
+              >
+                Split Payment
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Recent Activity (transaction history) */}
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
+          <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+            Recent Activity
+            <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">{transactions.length}</span>
+          </h3>
+          {transactions.length === 0 ? (
+            <p className="text-gray-400 text-sm italic text-center py-6">No transactions yet.</p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {transactions.map(tx => {
+                const outgoing = tx.senderId === selectedUser?.id;
+                const counterparty = outgoing ? tx.receiver : tx.sender;
+                const sign = outgoing ? '-' : '+';
+                const color = outgoing ? 'text-rose-600' : 'text-emerald-600';
+                const arrow = outgoing ? '→' : '←';
+                return (
+                  <div key={tx.id} className="flex items-center justify-between py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-gray-400 font-mono text-sm">{arrow}</span>
+                      <div>
+                        <p className="font-semibold text-gray-800">
+                          {outgoing ? 'Sent to' : 'Received from'} {counterparty.name}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {new Date(tx.createdAt).toLocaleString('en-BD')} • {tx.status}
+                        </p>
+                      </div>
+                    </div>
+                    <p className={`font-bold ${color}`}>
+                      {sign}{formatCurrency(tx.amount)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
       </div>
