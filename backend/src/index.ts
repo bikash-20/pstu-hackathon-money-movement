@@ -33,7 +33,7 @@ app.get('/api/health', async (_req, res) => {
 app.get('/api/users', async (req, res) => {
   try {
     const users = await prisma.user.findMany({
-      select: { id: true, name: true, balance: true }
+      select: { id: true, name: true, balance: true, phone: true }
     });
     res.json(users);
   } catch (error) {
@@ -153,7 +153,7 @@ app.get('/api/requests/:userId', async (req, res) => {
   try {
     const requests = await prisma.moneyRequest.findMany({
       where: { payerId: userId, status: 'PENDING' },
-      include: { requester: { select: { name: true } } }
+      include: { requester: { select: { name: true, phone: true } } }
     });
     res.json(requests);
   } catch (error) {
@@ -259,8 +259,8 @@ app.get('/api/transactions/:userId', async (req, res) => {
       },
       orderBy: { createdAt: 'desc' },
       include: {
-        sender:   { select: { id: true, name: true } },
-        receiver: { select: { id: true, name: true } }
+        sender:   { select: { id: true, name: true, phone: true } },
+        receiver: { select: { id: true, name: true, phone: true } }
       }
     });
     res.json(txs);
@@ -418,9 +418,9 @@ app.post('/api/seed', async (req, res) => {
     if (count === 0) {
       await prisma.user.createMany({
         data: [
-          { name: 'Alice', balance: 10000000 },
-          { name: 'Bob', balance: 10000000 },
-          { name: 'Charlie', balance: 10000000 }
+          { name: 'Alice',   balance: 10000000, phone: '+880 1712-345678' },
+          { name: 'Bob',     balance: 10000000, phone: '+880 1823-456789' },
+          { name: 'Charlie', balance: 10000000, phone: '+880 1934-567890' }
         ]
       });
       res.json({ success: true, message: 'Users seeded' });
@@ -447,13 +447,13 @@ app.post('/api/admin/reset', async (req, res) => {
     await prisma.user.deleteMany({});
     await prisma.user.createMany({
       data: [
-        { name: 'Alice', balance: 10000000 },
-        { name: 'Bob', balance: 10000000 },
-        { name: 'Charlie', balance: 10000000 }
+        { name: 'Alice',   balance: 10000000, phone: '+880 1712-345678' },
+        { name: 'Bob',     balance: 10000000, phone: '+880 1823-456789' },
+        { name: 'Charlie', balance: 10000000, phone: '+880 1934-567890' }
       ]
     });
     const users = await prisma.user.findMany({
-      select: { id: true, name: true, balance: true },
+      select: { id: true, name: true, balance: true, phone: true },
       orderBy: { id: 'asc' }
     });
     res.json({ success: true, message: 'Demo state reset', users });

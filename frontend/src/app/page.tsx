@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRightLeft, HandCoins, CheckCircle, XCircle, Users } from "lucide-react";
 
-type User = { id: number; name: string; balance: number };
-type MoneyRequest = { id: number; amount: number; requester: { name: string } };
+type User = { id: number; name: string; balance: number; phone?: string | null };
+type MoneyRequest = { id: number; amount: number; requester: { name: string; phone?: string | null } };
 type TransactionRow = {
   id: number;
   senderId: number;
@@ -12,8 +12,8 @@ type TransactionRow = {
   amount: number;
   status: string;
   createdAt: string;
-  sender: { id: number; name: string };
-  receiver: { id: number; name: string };
+  sender: { id: number; name: string; phone?: string | null };
+  receiver: { id: number; name: string; phone?: string | null };
 };
 
 let API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
@@ -286,7 +286,7 @@ export default function Home() {
           </h1>
           <div className="flex items-center gap-4">
             <span className="text-gray-500 text-sm font-medium uppercase tracking-wider">Simulating As:</span>
-            <select 
+            <select
               className="bg-gray-100 border-none rounded-lg px-4 py-2 font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-500"
               value={selectedUser?.id || ""}
               onChange={(e) => {
@@ -295,7 +295,9 @@ export default function Home() {
               }}
             >
               {users.map(u => (
-                <option key={u.id} value={u.id}>{u.name}</option>
+                <option key={u.id} value={u.id}>
+                  {u.name}{u.phone ? ` (${u.phone})` : ''}
+                </option>
               ))}
             </select>
           </div>
@@ -325,6 +327,11 @@ export default function Home() {
               <div>
                 <p className="text-emerald-100 text-sm">Account Holder</p>
                 <p className="font-semibold text-lg">{selectedUser?.name}</p>
+                {selectedUser?.phone && (
+                  <p className="text-emerald-100/80 text-sm font-mono mt-0.5">
+                    {selectedUser.phone}
+                  </p>
+                )}
               </div>
               <p className="text-sm font-mono opacity-80">ID: {selectedUser?.id.toString().padStart(6, '0')}</p>
             </div>
@@ -341,9 +348,12 @@ export default function Home() {
                   <div key={req.id} className="bg-gray-50 border border-gray-200 p-4 rounded-2xl flex justify-between items-center">
                     <div>
                       <p className="font-semibold text-gray-800">{req.requester.name}</p>
-                      <p className="text-rose-600 font-bold">{formatCurrency(req.amount)}</p>
+                      {req.requester.phone && (
+                        <p className="text-gray-400 text-xs font-mono">{req.requester.phone}</p>
+                      )}
+                      <p className="text-rose-600 font-bold mt-0.5">{formatCurrency(req.amount)}</p>
                     </div>
-                    <button 
+                    <button
                       disabled={loading}
                       onClick={() => handlePayRequest(req.id)}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
@@ -372,13 +382,15 @@ export default function Home() {
                 >
                   <option value="" disabled>Select a user</option>
                   {users.filter(u => u.id !== selectedUser?.id).map(u => (
-                    <option key={u.id} value={u.id}>{u.name}</option>
+                    <option key={u.id} value={u.id}>
+                      {u.name}{u.phone ? ` (${u.phone})` : ''}
+                    </option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount (BDT)</label>
-                <input 
+                <input
                   type="number" step="0.01" min="1" required
                   value={sendAmount} onChange={e => setSendAmount(e.target.value)}
                   className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500"
@@ -407,7 +419,9 @@ export default function Home() {
                 >
                   <option value="" disabled>Select a user</option>
                   {users.filter(u => u.id !== selectedUser?.id).map(u => (
-                    <option key={u.id} value={u.id}>{u.name}</option>
+                    <option key={u.id} value={u.id}>
+                      {u.name}{u.phone ? ` (${u.phone})` : ''}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -442,6 +456,7 @@ export default function Home() {
                         key={u.id}
                         type="button"
                         onClick={() => toggleSplitRecipient(u.id)}
+                        title={u.phone || undefined}
                         className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
                           active
                             ? 'bg-violet-600 text-white border-violet-600'
@@ -449,6 +464,11 @@ export default function Home() {
                         }`}
                       >
                         {u.name}
+                        {u.phone && (
+                          <span className={`ml-2 text-xs font-mono ${active ? 'text-violet-100' : 'text-gray-400'}`}>
+                            {u.phone}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -512,6 +532,9 @@ export default function Home() {
                         <p className="font-semibold text-gray-800">
                           {outgoing ? 'Sent to' : 'Received from'} {counterparty.name}
                         </p>
+                        {counterparty.phone && (
+                          <p className="text-xs text-gray-400 font-mono">{counterparty.phone}</p>
+                        )}
                         <p className="text-xs text-gray-400">
                           {new Date(tx.createdAt).toLocaleString('en-BD')} • {tx.status}
                         </p>

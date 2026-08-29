@@ -11,6 +11,10 @@ model User {
   id        Int      @id @default(autoincrement())
   name      String
   balance   Int      @default(10000000) // 100,000 BDT in cents
+  // Mock bKash/Nagad-style phone number, purely cosmetic.
+  // Format: "+880 1XXX-XXXXXX" (Bangladesh country code + mobile prefix).
+  // Not used for auth or lookup — display only.
+  phone     String?
   createdAt DateTime @default(now())
 
   sentTransactions     Transaction[]  @relation("SentTransactions")
