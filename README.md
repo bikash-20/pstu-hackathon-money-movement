@@ -3,8 +3,8 @@
 A reliable, highly-concurrent digital wallet application demonstrating fintech-grade transaction safety (pessimistic locking and idempotency) on a closed ecosystem.
 
 ## Live URLs
-*   **Frontend (Vercel):** *[Pending Deployment]*
-*   **Backend API (Render):** *[Pending Deployment]*
+*   **Frontend (Vercel):** https://frontend-alpha-inky-87.vercel.app
+*   **Backend API (Render):** *[Pending Deployment from Dashboard]*
 
 ## Architecture Highlights
 *   **PostgreSQL** for strict ACID compliance and row-level locking (`SELECT ... FOR UPDATE`) to prevent double-spending race conditions.
