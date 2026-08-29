@@ -8,7 +8,7 @@
 ### Script & Timing (3-5 Minutes)
 
 **1. Introduction (30s)**
-- "We built a reliable Money Movement Application. The core challenge in fintech isn't just moving money, it's preventing double-spending and handling network failures."
+- "I built a reliable Money Movement Application. The core challenge in fintech isn't just moving money, it's preventing double-spending and handling network failures."
 - Show the UI. Point out the mock auth ("Select User") and explain it was a deliberate choice to save time for concurrency engineering.
 
 **2. Basic Transfer (1m)**
@@ -19,12 +19,12 @@
 
 **3. The 'Double Click' Problem (1m)**
 - Explain the race condition: "What if a user clicks Send 5 times very fast?"
-- *If we built a visual demo for this, click a button rapidly.*
-- Switch to the database view or explain the code: "We used PostgreSQL and `SELECT ... FOR UPDATE`. This applies a pessimistic row-level lock. Only one transaction can touch Alice's balance at a time. The others wait, and fail if she runs out of money."
+- *If I built a visual demo for this, click a button rapidly.*
+- Switch to the database view or explain the code: "I used PostgreSQL and `SELECT ... FOR UPDATE`. This applies a pessimistic row-level lock. Only one transaction can touch Alice's balance at a time. The others wait, and fail if she runs out of money."
 
 **4. The 'Network Drop' Problem (1m)**
 - Explain the retry issue: "What if the network drops and the app retries the transfer?"
 - Explain the solution: "Every request sends a unique UUID (Idempotency Key). The backend caches the result. A retry won't double-charge."
 
 **5. Wrap-up (30s)**
-- "By focusing on database locks and idempotency, we built a system that is genuinely trustworthy, even at scale."
+- "By focusing on database locks and idempotency, I built a system that is genuinely trustworthy, even at scale."

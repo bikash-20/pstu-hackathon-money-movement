@@ -41,14 +41,16 @@ export default function Home() {
     }
   }, [selectedUser]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = async (): Promise<User[]> => {
     try {
       const res = await fetch(`${API_URL}/users`);
       const data = await res.json();
       setUsers(data);
       if (data.length > 0 && !selectedUser) setSelectedUser(data[0]);
+      return data;
     } catch (e) {
       console.error("Failed to fetch users");
+      return [];
     }
   };
 
@@ -63,9 +65,9 @@ export default function Home() {
   };
 
   const refreshData = async () => {
-    await fetchUsers();
+    const latestUsers = await fetchUsers();
     if (selectedUser) {
-      const updated = users.find(u => u.id === selectedUser.id);
+      const updated = latestUsers.find(u => u.id === selectedUser.id);
       if (updated) setSelectedUser(updated);
       fetchRequests(selectedUser.id);
     }

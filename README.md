@@ -4,7 +4,7 @@ A reliable, highly-concurrent digital wallet application demonstrating fintech-g
 
 ## Live URLs
 *   **Frontend (Vercel):** https://frontend-alpha-inky-87.vercel.app
-*   **Backend API (Render):** *[Pending Deployment from Dashboard]*
+*   **Backend API (Render):** https://pstu-hackathon-backend.onrender.com
 
 ## Architecture Highlights
 *   **PostgreSQL** for strict ACID compliance and row-level locking (`SELECT ... FOR UPDATE`) to prevent double-spending race conditions.
