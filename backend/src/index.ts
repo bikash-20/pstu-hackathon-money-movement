@@ -247,6 +247,36 @@ app.post('/api/seed', async (req, res) => {
   }
 });
 
+// ==========================================
+// Reset Demo State (Helper for hackathon)
+// ==========================================
+// Wipes transactions, money requests, and users, then re-seeds the three
+// demo users at exactly 10,000,000 cents (100,000 BDT) each. Safe to call
+// any number of times. Intended for resetting the demo environment between
+// sessions — there is no real data to preserve, and the audit ledger must
+// match the user balances, so a clean wipe is the only safe recovery.
+app.post('/api/admin/reset', async (req, res) => {
+  try {
+    await prisma.transaction.deleteMany({});
+    await prisma.moneyRequest.deleteMany({});
+    await prisma.user.deleteMany({});
+    await prisma.user.createMany({
+      data: [
+        { name: 'Alice', balance: 10000000 },
+        { name: 'Bob', balance: 10000000 },
+        { name: 'Charlie', balance: 10000000 }
+      ]
+    });
+    const users = await prisma.user.findMany({
+      select: { id: true, name: true, balance: true },
+      orderBy: { id: 'asc' }
+    });
+    res.json({ success: true, message: 'Demo state reset', users });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
