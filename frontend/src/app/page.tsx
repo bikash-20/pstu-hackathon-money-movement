@@ -6,7 +6,9 @@ import { ArrowRightLeft, HandCoins, CheckCircle, XCircle } from "lucide-react";
 type User = { id: number; name: string; balance: number };
 type MoneyRequest = { id: number; amount: number; requester: { name: string } };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+let API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+if (API_URL.endsWith('/')) API_URL = API_URL.slice(0, -1);
+if (!API_URL.endsWith('/api')) API_URL += '/api';
 
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat("en-BD", {
