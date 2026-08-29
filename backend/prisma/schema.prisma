@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  balance   Int      @default(10000000) // 100,000 BDT in cents
+  createdAt DateTime @default(now())
+
+  sentTransactions     Transaction[]  @relation("SentTransactions")
+  receivedTransactions Transaction[]  @relation("ReceivedTransactions")
+
+  requestsMade         MoneyRequest[] @relation("RequestsMade")
+  requestsReceived     MoneyRequest[] @relation("RequestsReceived")
+}
+
+model Transaction {
+  id             Int      @id @default(autoincrement())
+  senderId       Int
+  receiverId     Int
+  amount         Int      // in cents
+  status         String   @default("COMPLETED") // COMPLETED, FAILED
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  sender   User @relation("SentTransactions", fields: [senderId], references: [id])
+  receiver User @relation("ReceivedTransactions", fields: [receiverId], references: [id])
+}
+
+model MoneyRequest {
+  id          Int      @id @default(autoincrement())
+  requesterId Int
+  payerId     Int
+  amount      Int      // in cents
+  status      String   @default("PENDING") // PENDING, PAID, REJECTED
+  createdAt   DateTime @default(now())
+
+  requester User @relation("RequestsMade", fields: [requesterId], references: [id])
+  payer     User @relation("RequestsReceived", fields: [payerId], references: [id])
+}
