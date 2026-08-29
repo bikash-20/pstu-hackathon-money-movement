@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, HandCoins, CheckCircle, XCircle, Users } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowRightLeft,
+  HandCoins,
+  CheckCircle,
+  XCircle,
+  Users,
+  Wallet,
+  Phone,
+  Hash,
+  Sparkles,
+  Loader2,
+} from "lucide-react";
 
 type User = { id: number; name: string; balance: number; phone?: string | null };
 type MoneyRequest = { id: number; amount: number; requester: { name: string; phone?: string | null } };
@@ -21,11 +33,9 @@ if (API_URL.endsWith('/')) API_URL = API_URL.slice(0, -1);
 if (!API_URL.endsWith('/api')) API_URL += '/api';
 
 function formatCurrency(cents: number) {
-  // Intl.NumberFormat with currency: "BDT" falls back to the literal
-  // "BDT" prefix in most browsers because there is no native locale data
-  // for Bangladeshi Taka. The problem statement uses ৳, so we keep the
-  // Intl formatter only for digit grouping (thousands separators, locale-
-  // correct decimals) and prepend the ৳ symbol explicitly.
+  // Bangladeshi Taka (৳) — Intl has no native locale data for BDT, so we
+  // use Intl only for digit grouping (thousands separators, decimal places)
+  // and prepend the ৳ symbol explicitly.
   const number = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -33,6 +43,59 @@ function formatCurrency(cents: number) {
   return `৳${number}`;
 }
 
+// ---------- Framer Motion presets ----------
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  show:   { opacity: 1, y: 0, transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const } },
+};
+const stagger = {
+  hidden: { opacity: 0 },
+  show:   { opacity: 1, transition: { staggerChildren: 0.06, delayChildren: 0.08 } },
+};
+const toast = {
+  hidden: { opacity: 0, y: -16, scale: 0.98 },
+  show:   { opacity: 1, y: 0,  scale: 1,    transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] as const } },
+  exit:   { opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.2 } },
+};
+
+// ---------- Visual atoms ----------
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`shimmer rounded-xl ${className}`} />;
+}
+
+function StatBadge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "positive" | "warn" }) {
+  const tones = {
+    neutral:  "bg-slate-800/60 text-slate-300 border-slate-700",
+    positive: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+    warn:     "bg-rose-500/10 text-rose-300 border-rose-500/30",
+  } as const;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function GlassCard({
+  children,
+  className = "",
+  delay = 0,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  delay?: number;
+}) {
+  return (
+    <motion.div
+      variants={fadeUp}
+      className={`glass glass-hover rounded-3xl p-6 md:p-8 ${className}`}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+// ---------- App ----------
 export default function Home() {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -54,8 +117,7 @@ export default function Home() {
 
   useEffect(() => {
     // Ping /api/health on mount to wake up the Render free-tier service
-    // before any real work is attempted. Fire-and-forget: failure here
-    // just means we'll retry when fetchUsers() runs a moment later.
+    // before any real work is attempted. Fire-and-forget.
     fetch(`${API_URL}/health`).catch(() => {});
     fetchUsers();
   }, []);
@@ -65,8 +127,6 @@ export default function Home() {
       fetchRequests(selectedUser.id);
       fetchTransactions(selectedUser.id);
     } else {
-      // Clear per-user state when no user is selected so a stale
-      // selection doesn't leak into a fresh session.
       setRequests([]);
       setTransactions([]);
       setSplitRecipientIds([]);
@@ -126,21 +186,19 @@ export default function Home() {
     e.preventDefault();
     if (!selectedUser || !sendTargetId || !sendAmount) return;
     setLoading(true);
-
     try {
       const res = await fetch(`${API_URL}/transfer`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(), // Prevent double spending on network retry
+          "Idempotency-Key": crypto.randomUUID(),
         },
         body: JSON.stringify({
           senderId: selectedUser.id,
           receiverId: parseInt(sendTargetId),
-          amount: Math.round(parseFloat(sendAmount) * 100), // Convert to cents
+          amount: Math.round(parseFloat(sendAmount) * 100),
         }),
       });
-
       const data = await res.json();
       if (res.ok && data.success) {
         showMessage("success", `Successfully sent ${sendAmount} BDT`);
@@ -160,7 +218,6 @@ export default function Home() {
     e.preventDefault();
     if (!selectedUser || !reqTargetId || !reqAmount) return;
     setLoading(true);
-
     try {
       const res = await fetch(`${API_URL}/request`, {
         method: "POST",
@@ -171,7 +228,6 @@ export default function Home() {
           amount: Math.round(parseFloat(reqAmount) * 100),
         }),
       });
-
       const data = await res.json();
       if (res.ok && data.success) {
         showMessage("success", `Requested ${reqAmount} BDT successfully`);
@@ -198,7 +254,6 @@ export default function Home() {
         },
         body: JSON.stringify({ payerId: selectedUser.id }),
       });
-
       const data = await res.json();
       if (res.ok && data.success) {
         showMessage("success", "Request paid successfully");
@@ -219,7 +274,6 @@ export default function Home() {
     );
   };
 
-  // Even-split cents preview; mirrors backend remainder rule.
   const splitPreview = useMemo(() => {
     const total = parseFloat(splitTotalAmount);
     if (!Number.isFinite(total) || total <= 0) return null;
@@ -273,284 +327,442 @@ export default function Home() {
     }
   };
 
-  if (!selectedUser && users.length === 0) return <div className="p-10 text-center">Loading or No Users Found (Run DB Seed)...</div>;
+  // ---------- Loading & empty states ----------
+  if (!selectedUser && users.length === 0) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-10">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass rounded-3xl p-10 max-w-md w-full text-center space-y-5"
+        >
+          <div className="mx-auto w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+            <Wallet className="w-7 h-7 text-emerald-400" />
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold">Loading wallet</h2>
+            <p className="text-slate-400 text-sm mt-1">Connecting to the secure ledger…</p>
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-3/4 mx-auto" />
+            <Skeleton className="h-3 w-1/2 mx-auto" />
+          </div>
+          <div className="flex items-center justify-center gap-2 text-xs text-slate-500">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>If this takes more than 30s, run the backend seed endpoint.</span>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans p-6 md:p-12">
-      <div className="max-w-4xl mx-auto space-y-8">
-        
-        {/* Header / Mock Auth */}
-        <header className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm">
-          <h1 className="text-2xl font-bold text-emerald-600 flex items-center gap-2">
-            <HandCoins size={28} /> PSTU Wallet
-          </h1>
-          <div className="flex items-center gap-4">
-            <span className="text-gray-500 text-sm font-medium uppercase tracking-wider">Simulating As:</span>
-            <select
-              className="bg-gray-100 border-none rounded-lg px-4 py-2 font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-500"
-              value={selectedUser?.id || ""}
-              onChange={(e) => {
-                const u = users.find(u => u.id === parseInt(e.target.value));
-                if (u) setSelectedUser(u);
-              }}
-            >
-              {users.map(u => (
-                <option key={u.id} value={u.id}>
-                  {u.name}{u.phone ? ` (${u.phone})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-        </header>
-
-        {message && (
-          <div className={`p-4 rounded-xl flex items-center gap-3 text-white font-medium shadow-lg transition-all animate-in fade-in slide-in-from-top-4 ${message.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`}>
-            {message.type === 'success' ? <CheckCircle /> : <XCircle />}
-            {message.text}
-          </div>
-        )}
-
-        <div className="grid md:grid-cols-2 gap-8">
-          
-          {/* Dashboard / Balance */}
-          <div className="bg-emerald-600 text-white p-8 rounded-3xl shadow-xl flex flex-col justify-between relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-8 opacity-10">
-              <HandCoins size={120} />
+    <div className="min-h-screen font-sans p-6 md:p-12">
+      <motion.div
+        className="max-w-5xl mx-auto space-y-8"
+        variants={stagger}
+        initial="hidden"
+        animate="show"
+      >
+        {/* ---------- Header / Mock Auth ---------- */}
+        <motion.header
+          variants={fadeUp}
+          className="glass rounded-2xl px-6 py-5 flex justify-between items-center"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
-              <p className="text-emerald-100 font-medium mb-1">Available Balance</p>
-              <h2 className="text-5xl font-extrabold tracking-tight">
-                {selectedUser ? formatCurrency(selectedUser.balance) : "---"}
-              </h2>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-100">PSTU Wallet</h1>
+              <p className="text-xs text-slate-400">Money Movement · Hackathon Build</p>
             </div>
-            <div className="mt-12 flex justify-between items-end">
-              <div>
-                <p className="text-emerald-100 text-sm">Account Holder</p>
-                <p className="font-semibold text-lg">{selectedUser?.name}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-slate-400 text-xs font-medium uppercase tracking-wider hidden sm:inline">
+              Simulating As
+            </span>
+            <div className="relative">
+              <select
+                aria-label="Select user"
+                className="appearance-none bg-slate-800/60 border border-slate-700 hover:border-emerald-500/50 rounded-xl pl-4 pr-9 py-2 font-semibold text-slate-100 outline-none focus:ring-2 focus:ring-emerald-500/40 cursor-pointer transition-colors"
+                value={selectedUser?.id || ""}
+                onChange={(e) => {
+                  const u = users.find(u => u.id === parseInt(e.target.value));
+                  if (u) setSelectedUser(u);
+                }}
+              >
+                {users.map(u => (
+                  <option key={u.id} value={u.id} className="bg-slate-900">
+                    {u.name}{u.phone ? ` · ${u.phone}` : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">▾</span>
+            </div>
+          </div>
+        </motion.header>
+
+        {/* ---------- Toast ---------- */}
+        <AnimatePresence>
+          {message && (
+            <motion.div
+              key={message.text}
+              variants={toast}
+              initial="hidden"
+              animate="show"
+              exit="exit"
+              className={`rounded-2xl px-5 py-4 flex items-center gap-3 text-white font-medium shadow-lg border ${
+                message.type === 'success'
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100'
+                  : 'bg-rose-500/15 border-rose-500/40 text-rose-100'
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              {message.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+              {message.text}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ---------- Top row: Balance + Pending Requests ---------- */}
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Balance Card */}
+          <GlassCard className="relative overflow-hidden" delay={0}>
+            <div className="absolute inset-x-0 top-0 h-[2px] brand-stripe" />
+            <div className="flex justify-between items-start mb-8">
+              <div className="flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-emerald-400" />
+                <p className="text-slate-400 text-sm font-medium uppercase tracking-wider">Available Balance</p>
+              </div>
+              <StatBadge tone="positive">
+                <Sparkles className="w-3 h-3" /> Live
+              </StatBadge>
+            </div>
+            <motion.h2
+              key={selectedUser?.balance}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-slate-50"
+            >
+              {selectedUser ? formatCurrency(selectedUser.balance) : "---"}
+            </motion.h2>
+            <div className="mt-10 pt-6 border-t border-slate-700/50 flex justify-between items-end">
+              <div className="space-y-1">
+                <p className="text-slate-500 text-xs uppercase tracking-wider">Account Holder</p>
+                <p className="font-semibold text-lg text-slate-100">{selectedUser?.name}</p>
                 {selectedUser?.phone && (
-                  <p className="text-emerald-100/80 text-sm font-mono mt-0.5">
+                  <p className="flex items-center gap-1.5 text-slate-400 text-sm font-mono">
+                    <Phone className="w-3 h-3" />
                     {selectedUser.phone}
                   </p>
                 )}
               </div>
-              <p className="text-sm font-mono opacity-80">ID: {selectedUser?.id.toString().padStart(6, '0')}</p>
+              <p className="flex items-center gap-1.5 text-xs font-mono text-slate-500">
+                <Hash className="w-3 h-3" />
+                {selectedUser?.id.toString().padStart(6, '0')}
+              </p>
             </div>
-          </div>
+          </GlassCard>
 
           {/* Pending Requests */}
-          <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 flex flex-col">
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">Pending Requests <span className="bg-rose-100 text-rose-600 text-xs px-2 py-1 rounded-full">{requests.length}</span></h3>
-            <div className="flex-1 overflow-y-auto pr-2 space-y-3">
+          <GlassCard>
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="text-lg font-semibold text-slate-100">Pending Requests</h3>
+              <StatBadge tone={requests.length > 0 ? "warn" : "neutral"}>
+                {requests.length}
+              </StatBadge>
+            </div>
+            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
               {requests.length === 0 ? (
-                <p className="text-gray-400 text-sm italic text-center mt-10">No pending requests.</p>
-              ) : (
-                requests.map(req => (
-                  <div key={req.id} className="bg-gray-50 border border-gray-200 p-4 rounded-2xl flex justify-between items-center">
-                    <div>
-                      <p className="font-semibold text-gray-800">{req.requester.name}</p>
-                      {req.requester.phone && (
-                        <p className="text-gray-400 text-xs font-mono">{req.requester.phone}</p>
-                      )}
-                      <p className="text-rose-600 font-bold mt-0.5">{formatCurrency(req.amount)}</p>
-                    </div>
-                    <button
-                      disabled={loading}
-                      onClick={() => handlePayRequest(req.id)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
-                    >
-                      Pay
-                    </button>
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800/60 border border-slate-700 flex items-center justify-center mb-3">
+                    <HandCoins className="w-5 h-5 text-slate-500" />
                   </div>
-                ))
+                  <p className="text-slate-500 text-sm italic">No pending requests</p>
+                </div>
+              ) : (
+                <AnimatePresence initial={false}>
+                  {requests.map(req => (
+                    <motion.div
+                      key={req.id}
+                      layout
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 8, height: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="bg-slate-800/40 border border-slate-700/60 hover:border-emerald-500/40 rounded-2xl p-4 flex justify-between items-center transition-colors"
+                    >
+                      <div className="space-y-0.5">
+                        <p className="font-semibold text-slate-100">{req.requester.name}</p>
+                        {req.requester.phone && (
+                          <p className="text-slate-500 text-xs font-mono">{req.requester.phone}</p>
+                        )}
+                        <p className="text-rose-400 font-bold tabular-nums mt-1">{formatCurrency(req.amount)}</p>
+                      </div>
+                      <button
+                        disabled={loading}
+                        onClick={() => handlePayRequest(req.id)}
+                        className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-5 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-500/10"
+                      >
+                        Pay
+                      </button>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               )}
             </div>
-          </div>
+          </GlassCard>
+        </div>
 
-          {/* Send Money */}
-          <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
-            <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-              <ArrowRightLeft size={20} className="text-emerald-500" /> Send Money
-            </h3>
+        {/* ---------- Send / Request ---------- */}
+        <div className="grid md:grid-cols-2 gap-6">
+          <GlassCard>
+            <div className="flex items-center gap-2 mb-6">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+                <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-100">Send Money</h3>
+            </div>
             <form onSubmit={handleSendMoney} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Recipient</label>
-                <select 
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Recipient</label>
+                <select
                   required
                   value={sendTargetId}
                   onChange={e => setSendTargetId(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 transition-colors cursor-pointer"
                 >
                   <option value="" disabled>Select a user</option>
                   {users.filter(u => u.id !== selectedUser?.id).map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}{u.phone ? ` (${u.phone})` : ''}
+                    <option key={u.id} value={u.id} className="bg-slate-900">
+                      {u.name}{u.phone ? ` · ${u.phone}` : ''}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (BDT)</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Amount (BDT)</label>
                 <input
                   type="number" step="0.01" min="1" required
                   value={sendAmount} onChange={e => setSendAmount(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 transition-colors tabular-nums"
                   placeholder="e.g. 500"
                 />
               </div>
-              <button disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50">
+              <button
+                disabled={loading}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold py-3 rounded-xl transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
                 Send Instantly
               </button>
             </form>
-          </div>
+          </GlassCard>
 
-          {/* Request Money */}
-          <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
-            <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-              <HandCoins size={20} className="text-blue-500" /> Request Money
-            </h3>
+          <GlassCard>
+            <div className="flex items-center gap-2 mb-6">
+              <div className="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center">
+                <HandCoins className="w-4 h-4 text-sky-400" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-100">Request Money</h3>
+            </div>
             <form onSubmit={handleRequestMoney} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">From</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">From</label>
                 <select
                   required
                   value={reqTargetId}
                   onChange={e => setReqTargetId(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-colors cursor-pointer"
                 >
                   <option value="" disabled>Select a user</option>
                   {users.filter(u => u.id !== selectedUser?.id).map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}{u.phone ? ` (${u.phone})` : ''}
+                    <option key={u.id} value={u.id} className="bg-slate-900">
+                      {u.name}{u.phone ? ` · ${u.phone}` : ''}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (BDT)</label>
+                <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Amount (BDT)</label>
                 <input
                   type="number" step="0.01" min="1" required
                   value={reqAmount} onChange={e => setReqAmount(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 transition-colors tabular-nums"
                   placeholder="e.g. 1000"
                 />
               </div>
-              <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50">
+              <button
+                disabled={loading}
+                className="w-full bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold py-3 rounded-xl transition-all shadow-lg shadow-sky-500/20 hover:shadow-sky-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <HandCoins className="w-4 h-4" />}
                 Send Request
               </button>
             </form>
-          </div>
-
-          {/* Split Bill (even split across multiple recipients, single atomic POST) */}
-          <div className="md:col-span-2 bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
-            <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-              <Users size={20} className="text-violet-500" /> Split Bill
-            </h3>
-            <form onSubmit={handleSplitBill} className="space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Split with</label>
-                <div className="flex flex-wrap gap-2">
-                  {users.filter(u => u.id !== selectedUser?.id).map(u => {
-                    const active = splitRecipientIds.includes(u.id);
-                    return (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => toggleSplitRecipient(u.id)}
-                        title={u.phone || undefined}
-                        className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
-                          active
-                            ? 'bg-violet-600 text-white border-violet-600'
-                            : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                        }`}
-                      >
-                        {u.name}
-                        {u.phone && (
-                          <span className={`ml-2 text-xs font-mono ${active ? 'text-violet-100' : 'text-gray-400'}`}>
-                            {u.phone}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  {splitRecipientIds.length === 0
-                    ? 'Tap one or more people to include in the split.'
-                    : `${splitRecipientIds.length} selected`}
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Total amount (BDT)</label>
-                <input
-                  type="number" step="0.01" min="1" required
-                  value={splitTotalAmount}
-                  onChange={e => setSplitTotalAmount(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-violet-500"
-                  placeholder="e.g. 1500"
-                />
-              </div>
-              {splitPreview && (
-                <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 text-sm text-violet-900">
-                  Each person owes <span className="font-bold">{formatCurrency(splitPreview.share)}</span>
-                  {splitPreview.remainder > 0 && (
-                    <> ({splitPreview.remainder} extra cent{splitPreview.remainder === 1 ? '' : 's'} go to the first recipient so the ledger stays balanced)</>
-                  )}
-                  .
-                </div>
-              )}
-              <button
-                disabled={loading || splitRecipientIds.length === 0}
-                className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50"
-              >
-                Split Payment
-              </button>
-            </form>
-          </div>
+          </GlassCard>
         </div>
 
-        {/* Recent Activity (transaction history) */}
-        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
-          <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-            Recent Activity
-            <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">{transactions.length}</span>
-          </h3>
+        {/* ---------- Split Bill ---------- */}
+        <GlassCard className="md:col-span-2">
+          <div className="flex items-center gap-2 mb-6">
+            <div className="w-9 h-9 rounded-xl bg-violet-500/15 border border-violet-500/30 flex items-center justify-center">
+              <Users className="w-4 h-4 text-violet-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-100">Split Bill</h3>
+            <span className="text-slate-500 text-xs ml-2">Even-split across multiple recipients · single atomic transaction</span>
+          </div>
+          <form onSubmit={handleSplitBill} className="space-y-5">
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-3">Split with</label>
+              <div className="flex flex-wrap gap-2">
+                {users.filter(u => u.id !== selectedUser?.id).map(u => {
+                  const active = splitRecipientIds.includes(u.id);
+                  return (
+                    <motion.button
+                      key={u.id}
+                      type="button"
+                      onClick={() => toggleSplitRecipient(u.id)}
+                      whileTap={{ scale: 0.96 }}
+                      title={u.phone || undefined}
+                      className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
+                        active
+                          ? 'bg-violet-500 text-slate-950 border-violet-400 shadow-lg shadow-violet-500/30'
+                          : 'bg-slate-800/40 text-slate-300 border-slate-700 hover:border-violet-500/50 hover:text-slate-100'
+                      }`}
+                    >
+                      {u.name}
+                      {u.phone && (
+                        <span className={`ml-2 text-xs font-mono ${active ? 'text-slate-950/70' : 'text-slate-500'}`}>
+                          {u.phone}
+                        </span>
+                      )}
+                    </motion.button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-500 mt-3">
+                {splitRecipientIds.length === 0
+                  ? 'Tap one or more people to include in the split.'
+                  : `${splitRecipientIds.length} selected`}
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Total amount (BDT)</label>
+              <input
+                type="number" step="0.01" min="1" required
+                value={splitTotalAmount}
+                onChange={e => setSplitTotalAmount(e.target.value)}
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500/50 transition-colors tabular-nums"
+                placeholder="e.g. 1500"
+              />
+            </div>
+            {splitPreview && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-violet-500/10 border border-violet-500/30 rounded-xl p-4 text-sm text-violet-100"
+              >
+                Each person owes <span className="font-bold tabular-nums">{formatCurrency(splitPreview.share)}</span>
+                {splitPreview.remainder > 0 && (
+                  <> ({splitPreview.remainder} extra cent{splitPreview.remainder === 1 ? '' : 's'} go to the first recipient so the ledger stays balanced)</>
+                )}.
+              </motion.div>
+            )}
+            <button
+              disabled={loading || splitRecipientIds.length === 0}
+              className="w-full bg-violet-500 hover:bg-violet-400 text-slate-950 font-semibold py-3 rounded-xl transition-all shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+              Split Payment
+            </button>
+          </form>
+        </GlassCard>
+
+        {/* ---------- Recent Activity ---------- */}
+        <GlassCard>
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-slate-100">Recent Activity</h3>
+              <StatBadge tone="neutral">{transactions.length}</StatBadge>
+            </div>
+            {transactions.length > 0 && (
+              <span className="text-xs text-slate-500">Most recent first</span>
+            )}
+          </div>
           {transactions.length === 0 ? (
-            <p className="text-gray-400 text-sm italic text-center py-6">No transactions yet.</p>
+            <div className="flex flex-col items-center justify-center py-14 text-center">
+              <div className="w-12 h-12 rounded-2xl bg-slate-800/60 border border-slate-700 flex items-center justify-center mb-3">
+                <ArrowRightLeft className="w-5 h-5 text-slate-500" />
+              </div>
+              <p className="text-slate-500 text-sm">No transactions yet</p>
+              <p className="text-slate-600 text-xs mt-1">Send money or split a bill to see activity here.</p>
+            </div>
           ) : (
-            <div className="divide-y divide-gray-100">
-              {transactions.map(tx => {
-                const outgoing = tx.senderId === selectedUser?.id;
-                const counterparty = outgoing ? tx.receiver : tx.sender;
-                const sign = outgoing ? '-' : '+';
-                const color = outgoing ? 'text-rose-600' : 'text-emerald-600';
-                const arrow = outgoing ? '→' : '←';
-                return (
-                  <div key={tx.id} className="flex items-center justify-between py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-gray-400 font-mono text-sm">{arrow}</span>
-                      <div>
-                        <p className="font-semibold text-gray-800">
-                          {outgoing ? 'Sent to' : 'Received from'} {counterparty.name}
-                        </p>
-                        {counterparty.phone && (
-                          <p className="text-xs text-gray-400 font-mono">{counterparty.phone}</p>
-                        )}
-                        <p className="text-xs text-gray-400">
-                          {new Date(tx.createdAt).toLocaleString('en-BD')} • {tx.status}
-                        </p>
+            <div className="divide-y divide-slate-700/40">
+              <AnimatePresence initial={false}>
+                {transactions.map((tx, i) => {
+                  const outgoing = tx.senderId === selectedUser?.id;
+                  const counterparty = outgoing ? tx.receiver : tx.sender;
+                  const sign = outgoing ? '-' : '+';
+                  const color = outgoing ? 'text-rose-400' : 'text-emerald-400';
+                  const arrow = outgoing ? '→' : '←';
+                  return (
+                    <motion.div
+                      key={tx.id}
+                      layout
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0, transition: { delay: i * 0.02 } }}
+                      className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0"
+                    >
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-mono text-sm flex-shrink-0 ${
+                          outgoing
+                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        }`}>
+                          {arrow}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-100 truncate">
+                            {outgoing ? 'Sent to' : 'Received from'} {counterparty.name}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {counterparty.phone && (
+                              <span className="text-xs text-slate-500 font-mono">{counterparty.phone}</span>
+                            )}
+                            <span className="text-xs text-slate-600">·</span>
+                            <span className="text-xs text-slate-500">
+                              {new Date(tx.createdAt).toLocaleString('en-BD')}
+                            </span>
+                            <span className="text-xs text-slate-600">·</span>
+                            <StatBadge tone={tx.status === 'COMPLETED' ? 'positive' : 'warn'}>
+                              {tx.status}
+                            </StatBadge>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <p className={`font-bold ${color}`}>
-                      {sign}{formatCurrency(tx.amount)}
-                    </p>
-                  </div>
-                );
-              })}
+                      <p className={`font-bold tabular-nums text-base ${color}`}>
+                        {sign}{formatCurrency(tx.amount)}
+                      </p>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           )}
-        </div>
+        </GlassCard>
 
-      </div>
+        <motion.footer
+          variants={fadeUp}
+          className="text-center text-xs text-slate-600 pt-4 pb-2"
+        >
+          PSTU IT Carnival 2026 · Free-tier stack · Vercel + Render + Neon/Postgres
+        </motion.footer>
+      </motion.div>
     </div>
   );
 }
