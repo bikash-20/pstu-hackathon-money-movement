@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { api, relativeDate } from "../lib";
 import type { Notification } from "../types";
-import { Badge, Button, EmptyState, Skeleton, fadeUp, stagger } from "./ui";
+import { Badge, Button, EmptyState, Skeleton } from "./ui";
 
 // ─── Kind → icon mapping ──────────────────────────────────────────────────────
 const KIND_ICON: Record<string, React.ReactNode> = {
@@ -166,15 +166,18 @@ export function NotificationPanel({ userId }: { userId: number }) {
                   subtitle="Transfers and requests will appear here"
                 />
               ) : (
-                <motion.ul variants={stagger} initial="hidden" animate="show" className="divide-y divide-[var(--border)]">
-                  {items.map((n) => (
+                <motion.ul className="divide-y divide-[var(--border)]">
+                  {items.map((n, idx) => (
                     <motion.li
                       key={n.id}
-                      variants={fadeUp}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: n.read ? 0.6 : 1, y: 0 }}
+                      exit={{ opacity: 0, x: 16 }}
+                      transition={{ duration: 0.22, delay: Math.min(idx * 0.03, 0.3) }}
                       onClick={() => !n.read && markRead(n.id)}
                       className={`flex items-start gap-3 px-5 py-3.5 cursor-pointer transition-colors ${
                         n.read
-                          ? "opacity-60 hover:opacity-80"
+                          ? "hover:opacity-80"
                           : "hover:bg-[var(--muted)]"
                       }`}
                     >

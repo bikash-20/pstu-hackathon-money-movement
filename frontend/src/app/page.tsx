@@ -66,9 +66,6 @@ import {
   ToastBanner,
   ToastMessage,
   EmptyState,
-  fadeUp,
-  stagger,
-  toastVariants,
 } from "./components/ui";
 
 // ─── Tab definition ───────────────────────────────────────────────────────────
@@ -519,13 +516,15 @@ export default function Home() {
                     title="No pending requests"
                   />
                 ) : (
-                  <motion.ul variants={stagger} initial="hidden" animate="show">
-                    <AnimatePresence>
+                  <motion.ul>
+                    <AnimatePresence initial={false}>
                       {requests.map((req) => (
                         <motion.li
                           key={req.id}
-                          variants={fadeUp}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, x: 20, transition: { duration: 0.2 } }}
+                          transition={{ duration: 0.25 }}
                           className="bg-[var(--muted)] border border-[var(--border)] hover:border-[var(--primary)]/30 rounded-2xl p-4 mb-3 last:mb-0 transition-colors"
                         >
                           <div className="flex items-start justify-between mb-3">

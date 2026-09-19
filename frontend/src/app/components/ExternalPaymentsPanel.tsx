@@ -32,7 +32,7 @@ import {
 import type { UpcomingFestival } from "../lib";
 import type { Merchant, RecurringInstruction, User } from "../types";
 import {
-  Badge, Button, GlassCard, Input, Label, Select, EmptyState, fadeUp,
+  Badge, Button, GlassCard, Input, Label, Select, EmptyState,
 } from "./ui";
 
 type Flow = "add" | "withdraw" | "merchant" | "recurring" | "fx";
@@ -326,10 +326,10 @@ export function ExternalPaymentsPanel({
         {flow === "add" && (
           <motion.form
             key="add"
-            variants={fadeUp}
-            initial="hidden"
-            animate="show"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22 }}
             onSubmit={handleAdd}
             className="space-y-4"
           >
@@ -366,10 +366,10 @@ export function ExternalPaymentsPanel({
         {flow === "withdraw" && (
           <motion.form
             key="withdraw"
-            variants={fadeUp}
-            initial="hidden"
-            animate="show"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22 }}
             onSubmit={handleWithdraw}
             className="space-y-4"
           >
@@ -417,10 +417,10 @@ export function ExternalPaymentsPanel({
         {flow === "merchant" && (
           <motion.form
             key="merchant"
-            variants={fadeUp}
-            initial="hidden"
-            animate="show"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22 }}
             onSubmit={handleMerchantPay}
             className="space-y-4"
           >
@@ -493,10 +493,10 @@ export function ExternalPaymentsPanel({
         {flow === "recurring" && (
           <motion.div
             key="recurring"
-            variants={fadeUp}
-            initial="hidden"
-            animate="show"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22 }}
             className="space-y-5"
           >
             <form onSubmit={handleRecurring} className="space-y-4">
@@ -581,10 +581,10 @@ export function ExternalPaymentsPanel({
         {flow === "fx" && (
           <motion.form
             key="fx"
-            variants={fadeUp}
-            initial="hidden"
-            animate="show"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22 }}
             onSubmit={handleFx}
             className="space-y-4"
           >

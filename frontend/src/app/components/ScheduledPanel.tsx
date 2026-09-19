@@ -25,8 +25,6 @@ import {
   SectionHeader,
   Select,
   Skeleton,
-  fadeUp,
-  stagger,
 } from "./ui";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -257,13 +255,15 @@ export function ScheduledPanel({
             subtitle="Future-dated transfers will appear here"
           />
         ) : (
-          <motion.ul variants={stagger} initial="hidden" animate="show" className="divide-y divide-[var(--border)]">
-            {pending.map((tx) => {
+          <motion.ul className="divide-y divide-[var(--border)]">
+            {pending.map((tx, idx) => {
               const due = isDue(tx.status);
               return (
                 <motion.li
                   key={tx.id}
-                  variants={fadeUp}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, delay: Math.min(idx * 0.04, 0.3) }}
                   className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0"
                 >
                   <div className="flex items-center gap-3">

@@ -24,8 +24,6 @@ import {
   ProgressBar,
   SectionHeader,
   Skeleton,
-  fadeUp,
-  stagger,
 } from "./ui";
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -207,14 +205,16 @@ export function GoalsPanel({
             subtitle="Create a goal to start saving towards a target"
           />
         ) : (
-          <motion.ul variants={stagger} initial="hidden" animate="show" className="space-y-4">
+          <motion.ul className="space-y-4">
             {/* Active goals */}
-            {active.map((g) => {
+            {active.map((g, idx) => {
               const pct = Math.min(100, Math.round((g.savedAmount / g.targetAmount) * 100));
               return (
                 <motion.li
                   key={g.id}
-                  variants={fadeUp}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, delay: Math.min(idx * 0.04, 0.3) }}
                   className="bg-[var(--muted)] rounded-2xl p-5 border border-[var(--border)] space-y-3"
                 >
                   <div className="flex items-start justify-between">
@@ -269,10 +269,12 @@ export function GoalsPanel({
                   Completed
                 </p>
                 <ul className="space-y-3">
-                  {completed.map((g) => (
+                  {completed.map((g, idx) => (
                     <motion.li
                       key={g.id}
-                      variants={fadeUp}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.22, delay: Math.min(idx * 0.04, 0.3) }}
                       className="flex items-center gap-3 bg-[var(--positive)]/5 border border-[var(--positive)]/20 rounded-2xl p-4"
                     >
                       <CheckCircle2 className="w-5 h-5 text-[var(--positive)] flex-shrink-0" />

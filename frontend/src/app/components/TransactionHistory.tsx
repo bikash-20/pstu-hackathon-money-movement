@@ -31,8 +31,6 @@ import {
   Select,
   SectionHeader,
   Skeleton,
-  fadeUp,
-  stagger,
 } from "./ui";
 
 // ─── Direction filter options ─────────────────────────────────────────────────
@@ -122,7 +120,7 @@ export function TransactionHistory({
   }
 
   // ── Render helpers ─────────────────────────────────────────────────────────
-  function TxRow({ tx }: { tx: TransactionRow }) {
+  function TxRow({ tx, idx = 0 }: { tx: TransactionRow; idx?: number }) {
     const outgoing   = tx.senderId === userId;
     const party      = outgoing ? tx.receiver : tx.sender;
     const amountStr  = fmtBDT(tx.amount);
@@ -130,7 +128,9 @@ export function TransactionHistory({
 
     return (
       <motion.li
-        variants={fadeUp}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22, delay: Math.min(idx * 0.02, 0.4) }}
         className="flex items-center gap-4 py-3.5 first:pt-0 last:pb-0"
       >
         {/* Direction icon */}
@@ -285,12 +285,9 @@ export function TransactionHistory({
       ) : (
         <>
           <motion.ul
-            variants={stagger}
-            initial="hidden"
-            animate="show"
             className="divide-y divide-[var(--border)]"
           >
-            {items.map((tx) => <TxRow key={tx.id} tx={tx} />)}
+            {items.map((tx, idx) => <TxRow key={tx.id} tx={tx} idx={idx} />)}
           </motion.ul>
 
           {nextCursor && (
