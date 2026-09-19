@@ -35,11 +35,8 @@ const KIND_ICON: Record<string, React.ReactNode> = {
   SYSTEM:        <Info           className="w-4 h-4 text-[var(--muted-foreground)]" />,
 };
 
-const panelVariants = {
-  hidden: { opacity: 0, y: -8, scale: 0.97 },
-  show:   { opacity: 1, y: 0,  scale: 1, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] as const } },
-  exit:   { opacity: 0, y: -8, scale: 0.97, transition: { duration: 0.18 } },
-};
+// Panel uses inline initial/animate/exit/transition instead of variants to
+// avoid framer-motion variant propagation through AnimatePresence.
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function NotificationPanel({ userId }: { userId: number }) {
@@ -124,10 +121,10 @@ export function NotificationPanel({ userId }: { userId: number }) {
       <AnimatePresence>
         {open && (
           <motion.div
-            variants={panelVariants}
-            initial="hidden"
-            animate="show"
-            exit="exit"
+            initial={{ opacity: 0, y: -8, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0,  scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.97 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             className="absolute right-0 top-12 z-40 w-80 md:w-96 glass rounded-3xl shadow-2xl border border-[var(--primary)]/20 overflow-hidden"
           >
             {/* Header */}

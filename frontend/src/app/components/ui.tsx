@@ -13,26 +13,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, XCircle, Loader2, AlertTriangle } from "lucide-react";
 
 // ─── Animation presets ────────────────────────────────────────────────────────
-export const fadeUp = {
-  hidden: { opacity: 0, y: 14 },
-  show:   { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] as const } },
-};
-
-export const stagger = {
-  hidden: {},
-  show:   { transition: { staggerChildren: 0.055, delayChildren: 0.05 } },
-};
-
-export const scaleIn = {
-  hidden: { opacity: 0, scale: 0.95 },
-  show:   { opacity: 1, scale: 1, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] as const } },
-};
-
-export const toastVariants = {
-  hidden: { opacity: 0, y: -18, scale: 0.97 },
-  show:   { opacity: 1, y: 0,  scale: 1,   transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] as const } },
-  exit:   { opacity: 0, y: -10, scale: 0.97, transition: { duration: 0.2 } },
-};
+// (Removed stagger/fadeUp/scaleIn/toastVariants — they triggered a framer-motion
+//  variant propagation crash when used through AnimatePresence. Components
+//  now use inline initial/animate/exit/transition props.)
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 export function Skeleton({ className = "" }: { className?: string }) {
@@ -208,10 +191,10 @@ export function ToastBanner({ msg }: { msg: ToastMessage }) {
   return (
     <motion.div
       key={msg.id}
-      variants={toastVariants}
-      initial="hidden"
-      animate="show"
-      exit="exit"
+      initial={{ opacity: 0, y: -8, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.96 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       role="status"
       aria-live="polite"
       className={`rounded-2xl px-5 py-4 flex items-center gap-3 font-medium shadow-xl border ${styles[msg.type]}`}
@@ -266,10 +249,10 @@ export function ConfirmModal({
           onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
         >
           <motion.div
-            variants={scaleIn}
-            initial="hidden"
-            animate="show"
-            exit="hidden"
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             className="glass rounded-3xl p-8 w-full max-w-sm shadow-2xl border border-[var(--primary)]/25"
             role="dialog"
             aria-modal="true"
