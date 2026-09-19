@@ -1,7 +1,8 @@
 # PSTU IT Carnival 2026 — Money Movement Application
 <img width="1156" height="722" alt="image" src="https://github.com/user-attachments/assets/e1e6b992-405e-4296-a996-0a156b6b15e7" />
 
-<img width="1156" height="722" alt="image" src="https://github.com/user-attachments/assets/a2bf23b3-38fe-4dba-bd68-4cac9855ded6" />
+<img width="1156" height="722" alt="image" src="https://github.com/user-attachments/assets/60dc7c72-4135-454b-af4b-f40eba6112a8" />
+
 
 
 A reliable, highly-concurrent digital wallet demonstrating fintech-grade transaction
