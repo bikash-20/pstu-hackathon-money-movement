@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { parse, contactSchema } from "../validate.js";
+import { fail } from "../middleware.js";
 
 /** Saved payees — one row per (owner, contact) pair. */
 export function contactsRouter(prisma: PrismaClient): Router {
@@ -9,7 +10,7 @@ export function contactsRouter(prisma: PrismaClient): Router {
   r.get("/:ownerId", async (req, res) => {
     const ownerId = Number(req.params.ownerId);
     if (!Number.isInteger(ownerId) || ownerId <= 0) {
-      res.status(400).json({ error: "Invalid owner id" });
+      fail(res, 400, "Invalid owner id");
       return;
     }
     const rows = await prisma.contact.findMany({ where: { ownerId }, orderBy: { id: "desc" } });
@@ -24,7 +25,7 @@ export function contactsRouter(prisma: PrismaClient): Router {
   r.post("/", async (req, res) => {
     const parsed = parse(contactSchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     try {
@@ -36,17 +37,17 @@ export function contactsRouter(prisma: PrismaClient): Router {
     } catch (error: unknown) {
       const err = error as { code?: string };
       if (err?.code === "P2002") {
-        res.status(400).json({ error: "Contact already saved" });
+        fail(res, 400, "Contact already saved");
         return;
       }
-      res.status(400).json({ error: "Failed to save contact" });
+      fail(res, 400, "Failed to save contact");
     }
   });
 
   r.delete("/:id", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
-      res.status(400).json({ error: "Invalid contact id" });
+      fail(res, 400, "Invalid contact id");
       return;
     }
     await prisma.contact.deleteMany({ where: { id } });

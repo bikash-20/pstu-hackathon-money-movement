@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { parse, paySchema, requestSchema } from "../validate.js";
-import { requireIdempotency } from "../middleware.js";
+import { fail, requireIdempotency } from "../middleware.js";
 import { assertDailyLimit, bumpDailySpent, expiryDate, fmtBDT, isExpired, lockUser, notify } from "../money.js";
 
 export function requestRouter(prisma: PrismaClient): Router {
@@ -11,7 +11,7 @@ export function requestRouter(prisma: PrismaClient): Router {
   r.post("/", async (req, res) => {
     const parsed = parse(requestSchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     const { requesterId, payerId, amount, note } = parsed.value;
@@ -29,7 +29,7 @@ export function requestRouter(prisma: PrismaClient): Router {
       });
       res.json({ success: true, requestId: mr.id });
     } catch {
-      res.status(500).json({ error: "Failed to create request" });
+      fail(res, 500, "Failed to create request");
     }
   });
 
@@ -37,13 +37,13 @@ export function requestRouter(prisma: PrismaClient): Router {
   r.post("/:id/pay", requireIdempotency, async (req, res) => {
     const requestId = Number(req.params.id);
     if (!Number.isInteger(requestId) || requestId <= 0) {
-      res.status(400).json({ error: "Invalid request id" });
+      fail(res, 400, "Invalid request id");
       return;
     }
     const idempotencyKey = req.headers["idempotency-key"] as string;
     const parsed = parse(paySchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     const { payerId } = parsed.value;
@@ -99,7 +99,7 @@ export function requestRouter(prisma: PrismaClient): Router {
         res.json({ success: true, transactionId: existing?.id, message: "Returned cached result (concurrent replay)" });
         return;
       }
-      res.status(400).json({ error: err?.message ?? "Pay failed" });
+      fail(res, 400, err?.message ?? "Pay failed");
     }
   });
 
@@ -107,12 +107,12 @@ export function requestRouter(prisma: PrismaClient): Router {
   r.post("/:id/reject", async (req, res) => {
     const requestId = Number(req.params.id);
     if (!Number.isInteger(requestId) || requestId <= 0) {
-      res.status(400).json({ error: "Invalid request id" });
+      fail(res, 400, "Invalid request id");
       return;
     }
     const parsed = parse(paySchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     try {
@@ -121,12 +121,12 @@ export function requestRouter(prisma: PrismaClient): Router {
         data: { status: "REJECTED" },
       });
       if (updated.count === 0) {
-        res.status(400).json({ error: "Request not found, not yours, or no longer pending" });
+        fail(res, 400, "Request not found, not yours, or no longer pending");
         return;
       }
       res.json({ success: true });
     } catch {
-      res.status(500).json({ error: "Failed to reject request" });
+      fail(res, 500, "Failed to reject request");
     }
   });
 

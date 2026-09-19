@@ -1,5 +1,9 @@
 {
   // Visit https://aka.ms/tsconfig to read more about this file
+  // Exclude prisma.config.ts — it's a config file for the `prisma` CLI which
+  // ships its own types, and we don't want type-checks to gate on the
+  // specific prisma version installed.
+  "exclude": ["prisma.config.ts"],
   "compilerOptions": {
     // File Layout
     // "rootDir": "./src",

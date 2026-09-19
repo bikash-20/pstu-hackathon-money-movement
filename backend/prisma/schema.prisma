@@ -14,9 +14,13 @@ model User {
   // Mock bKash/Nagad-style phone number, purely cosmetic.
   // Format: "+880 1XXX-XXXXXX" (Bangladesh country code + mobile prefix).
   phone     String?
-  // Daily transfer circuit-breaker: reset every UTC day.
-  dailySpent   Int      @default(0)
-  dailySpentAt DateTime @default(now())
+  // Daily transfer circuit-breaker.
+  // `dailyWindow` is the settlement-day key ("YYYY-MM-DD" in WALLET_TIMEZONE,
+  // default Asia/Dhaka) that `dailySpent` belongs to. Comparing day *strings*
+  // instead of timestamps removes every timezone/Date-coercion ambiguity from
+  // the limit check — the invariant is just dailyWindow === todayKey().
+  dailySpent  Int    @default(0)
+  dailyWindow String @default("")
   createdAt DateTime @default(now())
 
   sentTransactions     Transaction[]  @relation("SentTransactions")
@@ -25,23 +29,40 @@ model User {
   requestsMade         MoneyRequest[] @relation("RequestsMade")
   requestsReceived     MoneyRequest[] @relation("RequestsReceived")
 
-  contactsOwned  Contact[] @relation("ContactsOwned")
-  goals          Goal[]
-  notifications  Notification[]
-  auditLogs      AuditLog[]
+  contactsOwned        Contact[]            @relation("ContactsOwned")
+  goals                Goal[]
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  recurringAsSender    RecurringInstruction[] @relation("RecurringOwner")
+  recurringAsRecipient RecurringInstruction[] @relation("RecurringRecipient")
 }
 
 model Transaction {
   id             Int      @id @default(autoincrement())
   senderId       Int
   receiverId     Int
-  amount         Int      // in cents
-  status         String   @default("COMPLETED") // COMPLETED, FAILED
+  amount         Int      // in cents (always BDT; FX is converted at the boundary)
+  // Ledger-level status. COMPLETED is the normal happy path; REFUNDED marks
+  // an outgoing row whose value has been reversed (see /api/refunds); SCHEDULED:<iso>
+  // marks a deferred row; FAILED is reserved for rolled-back attempts.
+  status         String   @default("COMPLETED")
   idempotencyKey String   @unique
   // Free-form memo / note attached by the sender (max 140 chars, app-enforced).
   memo           String?
   // Denormalized category chosen by the sender for spending insights.
+  // Includes both wallet-internal (TRANSFER, FOOD, …) and external-bound
+  // (FUNDING, WITHDRAWAL, MERCHANT, REFUND, FX) flows.
   category       String   @default("TRANSFER")
+  // Wallet always settles in BDT. FX transfers set this to the foreign currency
+  // the sender funded with (so the audit trail keeps the source currency).
+  currency       String   @default("BDT")
+  // Merchant checkout: a denormalized string code (e.g. "DARAZ") so the row
+  // survives a Merchant deletion. Not a real FK by design — the merchant
+  // name in the activity feed is resolved at read-time.
+  merchantCode   String?
+  // Festival bill pay: optional tag so the activity feed can group
+  // Eid / Durga Puja / Pohela Boishakh payments together.
+  festivalTag    String?
   createdAt      DateTime @default(now())
 
   sender   User @relation("SentTransactions", fields: [senderId], references: [id])
@@ -50,6 +71,8 @@ model Transaction {
   @@index([senderId, createdAt])
   @@index([receiverId, createdAt])
   @@index([category])
+  @@index([status])
+  @@index([merchantCode])
 }
 
 model MoneyRequest {
@@ -126,5 +149,51 @@ model AuditLog {
   actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([action, createdAt])
+}
+
+// Merchant directory — external counterparties that never hold a wallet
+// balance. The user pays a merchant by funding their wallet, then creating
+// a `Transaction` with `receiverId = 0` (the seeded "External" user) and
+// `merchantCode` set. Read at pay-time so a typo'd code is rejected before
+// money moves.
+model Merchant {
+  id          Int      @id @default(autoincrement())
+  // Short upper-case code, unique. Examples: DARAZ, FLIPCART, FOODPANDA,
+  // DPDC, WASA, GP, ROBI. Two letters minimum so a typo is detectable.
+  code        String   @unique
+  // Human label shown in the activity feed / merchant picker.
+  name        String
+  // Maps onto CATEGORIES (SHOPPING, FOOD, BILLS, TRANSPORT, …).
+  category    String
+  // Optional payment-rail hint ("BKASH" / "NAGAD" / "ROCKET" / null).
+  mfsProvider String?
+  createdAt   DateTime @default(now())
+}
+
+// Standing instructions: an active row that the recurring-settler turns
+// into one or more SCHEDULED:<iso> Transaction rows on each run. We model
+// it as data (not a cron job) so users can see / pause / cancel their
+// instructions in the UI, exactly like goals.
+model RecurringInstruction {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  recipientId Int
+  amount      Int      // cents per leg
+  // "DAILY" | "WEEKLY" | "MONTHLY". The settler advances nextRunAt by the
+  // matching interval after each successful materialization.
+  cadence     String
+  startAt     DateTime
+  // When the next leg is due. Settled rows push this forward by the cadence.
+  nextRunAt   DateTime
+  active      Boolean  @default(true)
+  memo        String?
+  category    String   @default("TRANSFER")
+  createdAt   DateTime @default(now())
+
+  user      User @relation("RecurringOwner",      fields: [userId],      references: [id], onDelete: Cascade)
+  recipient User @relation("RecurringRecipient", fields: [recipientId], references: [id])
+
+  @@index([userId, active])
+  @@index([nextRunAt, active])
 }
 

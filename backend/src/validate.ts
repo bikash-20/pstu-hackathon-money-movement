@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CATEGORIES } from "./config.js";
+import { CATEGORIES, FUNDING_PROVIDERS, FX_CURRENCIES, RECURRING_CADENCES } from "./config.js";
 
 const id = z.number().int().positive();
 const cents = z.number().int().positive().max(100_000_000);
@@ -65,6 +65,66 @@ export const qrPaySchema = z.object({
   amount: cents,
   memo,
   category,
+});
+
+// ─── External-payments v3 schemas ─────────────────────────────────────────────
+
+export const fundingAddSchema = z.object({
+  userId: id,
+  amount: cents,
+  source: z.enum(FUNDING_PROVIDERS),
+  memo,
+});
+
+export const fundingWithdrawSchema = z.object({
+  userId: id,
+  amount: cents,
+  destination: z.enum(FUNDING_PROVIDERS),
+  // Account reference the user gave us (MFS wallet number, bank account last 4).
+  // Optional: not all rails require it for a demo top-up.
+  accountRef: z.string().trim().max(40).optional(),
+  memo,
+});
+
+export const merchantPaySchema = z.object({
+  userId: id,
+  // Short code like "DARAZ"; we look it up in the Merchant table to get the
+  // human label and validate it exists before money moves.
+  merchantCode: z.string().trim().min(2).max(32),
+  amount: cents,
+  // External order reference — written into the memo so a refund/audit can
+  // be traced back to the merchant's order id.
+  orderRef: z.string().trim().max(40).optional(),
+  memo,
+});
+
+export const refundSchema = z.object({
+  originalId: id,
+  // Original sender is the only authorized requester; validated again at
+  // query time inside the route (defence-in-depth).
+  requesterId: id,
+  reason: z.string().trim().max(140).optional(),
+});
+
+export const recurringSchema = z.object({
+  userId: id,
+  recipientId: id,
+  amount: cents,
+  cadence: z.enum(RECURRING_CADENCES),
+  // First execution timestamp. ISO datetime string.
+  startAt: z.string().datetime(),
+  memo,
+  category,
+}).refine((v) => v.userId !== v.recipientId, { message: "Cannot recurring-pay yourself" });
+
+export const fxTransferSchema = z.object({
+  senderId: id,
+  receiverId: id,
+  // Foreign-currency amount in its own major unit (e.g. 10 = $10 USD).
+  amountForeign: z.number().positive().max(10_000_000),
+  currency: z.enum(FX_CURRENCIES),
+  category,
+  memo,
 });
 
 export function parse<T>(schema: z.ZodType<T>, body: unknown): { ok: true; value: T } | { ok: false; error: string } {

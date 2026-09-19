@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { parse, scheduleSchema } from "../validate.js";
-import { requireIdempotency } from "../middleware.js";
+import { fail, requireIdempotency } from "../middleware.js";
 import { assertDailyLimit, bumpDailySpent, fmtBDT, lockUser, notify } from "../money.js";
 
 /** Scheduled transfers: intent recorded now (SCHEDULED:<iso> ledger row),
@@ -12,7 +12,7 @@ export function scheduledRouter(prisma: PrismaClient): Router {
   r.get("/:userId", async (req, res) => {
     const userId = Number(req.params.userId);
     if (!Number.isInteger(userId) || userId <= 0) {
-      res.status(400).json({ error: "Invalid user id" });
+      fail(res, 400, "Invalid user id");
       return;
     }
     res.json(
@@ -29,13 +29,13 @@ export function scheduledRouter(prisma: PrismaClient): Router {
     const idempotencyKey = req.headers["idempotency-key"] as string;
     const parsed = parse(scheduleSchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     const { senderId, receiverId, amount, memo, category, executeAt } = parsed.value;
     const when = new Date(executeAt);
     if (Number.isNaN(when.getTime()) || when.getTime() <= Date.now()) {
-      res.status(400).json({ error: "executeAt must be a future ISO datetime" });
+      fail(res, 400, "executeAt must be a future ISO datetime");
       return;
     }
     try {
@@ -51,13 +51,12 @@ export function scheduledRouter(prisma: PrismaClient): Router {
           idempotencyKey,
         },
       });
-      await prisma.notification.create({
-        data: {
-          userId: senderId, kind: "SYSTEM",
-          title: `Scheduled ${fmtBDT(amount)}`,
-          body: `Settles ${when.toLocaleString("en-BD")}`,
-        },
-      });
+      await notify(
+        prisma as unknown as Parameters<typeof notify>[0],
+        senderId, "SYSTEM",
+        `Scheduled ${fmtBDT(amount)}`,
+        `Settles ${when.toLocaleString("en-BD")}`,
+      );
       res.json({ success: true, scheduledId: row.id, executeAt: when.toISOString() });
     } catch (error: unknown) {
       const err = error as { code?: string; message?: string };
@@ -65,7 +64,7 @@ export function scheduledRouter(prisma: PrismaClient): Router {
         res.json({ success: true, message: "Returned cached result (concurrent replay)" });
         return;
       }
-      res.status(400).json({ error: err?.message ?? "Schedule failed" });
+      fail(res, 400, err?.message ?? "Schedule failed");
     }
   });
 
@@ -86,6 +85,11 @@ export function scheduledRouter(prisma: PrismaClient): Router {
         }
         try {
           await prisma.$transaction(async (tx) => {
+            // Re-check the row inside the transaction so two concurrent
+            // settlers don't double-debit the sender. The lockUser FOR UPDATE
+            // serialises them.
+            const fresh = await tx.transaction.findUnique({ where: { id: row.id } });
+            if (!fresh || fresh.status === "COMPLETED") throw new Error("already settled");
             const sender = await lockUser(tx, row.senderId);
             if (!sender) throw new Error("Sender not found");
             if (sender.balance < row.amount) throw new Error("Insufficient funds");
@@ -103,7 +107,7 @@ export function scheduledRouter(prisma: PrismaClient): Router {
       }
       res.json({ success: true, settled, skipped });
     } catch {
-      res.status(500).json({ error: "Settle failed" });
+      fail(res, 500, "Settle failed");
     }
   });
 

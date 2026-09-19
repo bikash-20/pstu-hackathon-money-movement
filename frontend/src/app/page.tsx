@@ -1,749 +1,931 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+/**
+ * page.tsx — PSTU Wallet · Main Application Shell
+ *
+ * Responsibilities:
+ *  • User session selection (mock auth)
+ *  • Global state: selected user, toast queue, refresh signals
+ *  • Layout: header, balance card, action panels, history
+ *  • Delegates every feature to its own component
+ *
+ * Architecture: thin orchestrator — no business logic lives here.
+ */
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowRightLeft, HandCoins, CheckCircle, XCircle, Users, Wallet,
-  Bell, PiggyBank, CalendarClock, QrCode, Star, Search,
-  Sparkles, TrendingUp, ShieldCheck,
+  Wallet,
+  Phone,
+  Hash,
+  Sparkles,
+  Loader2,
+  ArrowRightLeft,
+  HandCoins,
+  Users,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  X,
+  CalendarClock,
+  QrCode,
+  Target,
+  BarChart2,
+  PlusCircle,
 } from "lucide-react";
-import { API_URL, CATEGORIES, api, formatCurrency, uuid } from "./lib";
 
-// ---------- Types ----------
-type User = { id: number; name: string; balance: number; phone?: string | null };
-type MoneyRequest = {
-  id: number; amount: number; status: string; note?: string | null;
-  createdAt: string; expiresAt?: string;
-  requester?: { name: string; phone?: string | null };
-  payer?: { name: string; phone?: string | null };
-  expired?: boolean;
-};
-type Tx = {
-  id: number; senderId: number; receiverId: number; amount: number;
-  status: string; memo?: string | null; category?: string;
-  createdAt: string;
-  sender: { id: number; name: string; phone?: string | null };
-  receiver: { id: number; name: string; phone?: string | null };
-};
-type Contact = { id: number; ownerId: number; contactId: number; nickname?: string | null; contact?: User | null };
-type Goal = { id: number; name: string; targetAmount: number; savedAmount: number; completedAt?: string | null };
-type Notif = { id: number; kind: string; title: string; body?: string | null; read: boolean; createdAt: string };
-type Insight = { userId: number; days: number; totalOut: number; count: number; breakdown: { category: string; total: number; count: number; pct: number }[] };
+import {
+  api,
+  CATEGORIES,
+  fmtBDT,
+  LOW_BALANCE_THRESHOLD_CENTS,
+  uuid,
+} from "./lib";
+import type { MoneyRequest, User } from "./types";
 
-// ---------- Motion ----------
-const fadeUp = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] as const } },
-};
-const toastAnim = {
-  hidden: { opacity: 0, y: -16, scale: 0.98 },
-  show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] as const } },
-  exit: { opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.18 } },
-};
+// ─── Feature components ───────────────────────────────────────────────────────
+import { NotificationPanel }      from "./components/NotificationPanel";
+import { SpendingInsights }       from "./components/SpendingInsights";
+import { GoalsPanel }             from "./components/GoalsPanel";
+import { ScheduledPanel }         from "./components/ScheduledPanel";
+import { QRPanel }                from "./components/QRPanel";
+import { TransactionHistory }     from "./components/TransactionHistory";
+import { ExternalPaymentsPanel }  from "./components/ExternalPaymentsPanel";
 
-// ---------- Atoms ----------
-function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`shimmer rounded-xl ${className}`} />;
-}
-function StatBadge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "positive" | "warn" | "gold" }) {
-  const tones = {
-    neutral: "bg-indigo-400/10 text-indigo-200 border-indigo-400/25",
-    positive: "bg-emerald-400/10 text-emerald-300 border-emerald-400/30",
-    warn: "bg-rose-400/10 text-rose-300 border-rose-400/30",
-    gold: "bg-amber-400/10 text-amber-300 border-amber-400/30",
-  } as const;
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium ${tones[tone]}`}>{children}</span>
-  );
-}
-function GlassCard({ children, className = "", title, icon, action }: {
-  children: React.ReactNode; className?: string; title?: string; icon?: React.ReactNode; action?: React.ReactNode;
-}) {
-  return (
-    <motion.section variants={fadeUp} className={`glass rounded-3xl p-6 md:p-7 ${className}`}>
-      {(title || action) && (
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-amber-50">
-            <span className="text-amber-400">{icon}</span>{title}
-          </h2>
-          {action}
-        </div>
-      )}
-      {children}
-    </motion.section>
-  );
-}
-const inputCls =
-  "w-full bg-[#0B1026]/80 border border-[#2B3560] hover:border-amber-400/40 rounded-xl px-3.5 py-2.5 text-sm text-amber-50 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-amber-400/40 transition-colors";
-const labelCls = "block text-xs font-medium uppercase tracking-wider text-slate-400 mb-1.5";
-const btnGold =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-500 px-4 py-2.5 text-sm font-bold text-[#1A1400] hover:brightness-110 active:scale-[0.98] disabled:opacity-50 transition-all shadow-lg shadow-amber-500/20";
-const btnGhost =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-[#2B3560] bg-indigo-400/5 px-4 py-2.5 text-sm font-semibold text-indigo-100 hover:border-amber-400/40 transition-colors disabled:opacity-50";
-const CAT_COLORS: Record<string, string> = {
-  FOOD: "#FB923C", TRANSPORT: "#38BDF8", SHOPPING: "#F472B6", BILLS: "#FACC15",
-  EDUCATION: "#818CF8", HEALTH: "#34D399", ENTERTAINMENT: "#C084FC", SAVINGS: "#F2B705",
-  TRANSFER: "#94A3B8", OTHER: "#64748B",
-};
+// ─── Shared UI atoms ──────────────────────────────────────────────────────────
+import {
+  Badge,
+  Button,
+  ConfirmModal,
+  ConfirmState,
+  GlassCard,
+  Input,
+  Label,
+  Select,
+  Skeleton,
+  ToastBanner,
+  ToastMessage,
+  EmptyState,
+  fadeUp,
+  stagger,
+  toastVariants,
+} from "./components/ui";
 
-// ---------- Main state ----------
+// ─── Tab definition ───────────────────────────────────────────────────────────
+type Tab = "send" | "request" | "split" | "scheduled" | "qr" | "external";
+
+const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: "send",      label: "Send",      icon: <ArrowRightLeft className="w-4 h-4" /> },
+  { id: "request",   label: "Request",   icon: <HandCoins      className="w-4 h-4" /> },
+  { id: "split",     label: "Split",     icon: <Users          className="w-4 h-4" /> },
+  { id: "scheduled", label: "Schedule",  icon: <CalendarClock  className="w-4 h-4" /> },
+  { id: "qr",        label: "QR Pay",    icon: <QrCode         className="w-4 h-4" /> },
+  { id: "external",  label: "External",  icon: <PlusCircle     className="w-4 h-4" /> },
+];
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [users, setUsers] = useState<User[]>([]);
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [users,        setUsers]        = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [requests, setRequests] = useState<MoneyRequest[]>([]);
-  const [requestsOut, setRequestsOut] = useState<MoneyRequest[]>([]);
-  const [txs, setTxs] = useState<Tx[]>([]);
-  const [txCursor, setTxCursor] = useState<number | null>(null);
-  const [txLoading, setTxLoading] = useState(false);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [notifs, setNotifs] = useState<Notif[]>([]);
-  const [insights, setInsights] = useState<Insight | null>(null);
-  const [scheduled, setScheduled] = useState<Tx[]>([]);
+  const [requests,     setRequests]     = useState<MoneyRequest[]>([]);
+  const [toasts,       setToasts]       = useState<ToastMessage[]>([]);
+  const [tab,          setTab]          = useState<Tab>("send");
+  const [txRefresh,    setTxRefresh]    = useState(0);
+  const [loading,      setLoading]      = useState(false);
+  const [confirm,      setConfirm]      = useState<ConfirmState>(null);
+  const [seeding,      setSeeding]      = useState(false);
 
-  // filters
-  const [direction, setDirection] = useState("all");
-  const [category, setCategory] = useState("ALL");
-  const [query, setQuery] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  const [tab, setTab] = useState<"all" | "requests" | "scheduled">("all");
+  // Send form
+  const [sendTarget,   setSendTarget]   = useState("");
+  const [sendAmount,   setSendAmount]   = useState("");
+  const [sendMemo,     setSendMemo]     = useState("");
+  const [sendCategory, setSendCategory] = useState("TRANSFER");
 
-  // forms
-  const [sendTargetId, setSendTargetId] = useState("");
-  const [sendAmount, setSendAmount] = useState("");
-  const [sendMemo, setSendMemo] = useState("");
-  const [sendCat, setSendCat] = useState<string>("TRANSFER");
-  const [reqTargetId, setReqTargetId] = useState("");
-  const [reqAmount, setReqAmount] = useState("");
-  const [reqNote, setReqNote] = useState("");
-  const [splitIds, setSplitIds] = useState<number[]>([]);
-  const [splitTotal, setSplitTotal] = useState("");
-  const [schedTarget, setSchedTarget] = useState("");
-  const [schedAmount, setSchedAmount] = useState("");
-  const [schedWhen, setSchedWhen] = useState("");
-  const [qrAmount, setQrAmount] = useState("");
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  const [qrRedeem, setQrRedeem] = useState("");
-  const [goalName, setGoalName] = useState("");
-  const [goalTarget, setGoalTarget] = useState("");
-  const [goalDeposits, setGoalDeposits] = useState<Record<number, string>>({});
+  // Request form
+  const [reqTarget,    setReqTarget]    = useState("");
+  const [reqAmount,    setReqAmount]    = useState("");
+  const [reqNote,      setReqNote]      = useState("");
 
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Split form
+  const [splitIds,     setSplitIds]     = useState<number[]>([]);
+  const [splitTotal,   setSplitTotal]   = useState("");
+  const [splitMemo,    setSplitMemo]    = useState("");
+  const [splitCat,     setSplitCat]     = useState("TRANSFER");
 
-  useEffect(() => {
-    fetch(`${API_URL}/health`).catch(() => {});
-    api<User[]>("/users").then((data) => {
-      setUsers(data);
-      if (data.length > 0) setSelectedUser((prev) => prev ?? data[0]!);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(query.trim()), 400);
-    return () => clearTimeout(t);
-  }, [query]);
-
-  const showMessage = useCallback((type: "success" | "error", text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 4200);
-  }, []);
-
-  const refreshAll = useCallback(async (uid: number) => {
+  // ── Refund flow (called from TransactionHistory's inline button)
+  async function handleRefund(originalId: number) {
+    if (!selectedUser) return;
     try {
-      const [u, rin, rout, c, g, n, ins, sch] = await Promise.all([
-        api<User[]>("/users"),
-        api<MoneyRequest[]>(`/requests/${uid}`),
-        api<MoneyRequest[]>(`/requests-out/${uid}`),
-        api<Contact[]>(`/contacts/${uid}`),
-        api<Goal[]>(`/goals/${uid}`),
-        api<Notif[]>(`/notifications/${uid}`),
-        api<Insight>(`/insights/${uid}?days=30`),
-        api<Tx[]>(`/scheduled/${uid}`).catch(() => [] as Tx[]),
-      ]);
-      setUsers(u);
-      const me = u.find((x) => x.id === uid);
-      if (me) setSelectedUser(me);
-      setRequests(rin);
-      setRequestsOut(rout);
-      setContacts(c);
-      setGoals(g);
-      setNotifs(n);
-      setInsights(ins);
-      setScheduled(sch);
-    } catch { /* keep stale UI on transient failure */ }
-  }, []);
-
-  const loadTxs = useCallback(async (uid: number, reset = false, cursor?: number | null) => {
-    setTxLoading(true);
-    try {
-      const params = new URLSearchParams({
-        limit: "20", direction,
-        ...(category !== "ALL" ? { category } : {}),
-        ...(debouncedQ ? { q: debouncedQ } : {}),
-        ...(cursor ? { cursor: String(cursor) } : {}),
+      await api("/api/refunds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
+        body: JSON.stringify({ originalId, requesterId: selectedUser.id }),
       });
-      const data = await api<{ items: Tx[]; nextCursor: number | null }>(`/transactions/${uid}?${params}`);
-      setTxs((prev) => (reset ? data.items : [...prev, ...data.items]));
-      setTxCursor(data.nextCursor);
-    } catch { if (reset) setTxs([]); } finally { setTxLoading(false); }
-  }, [direction, category, debouncedQ]);
+      toast("success", "Refund issued");
+      refreshBalance();
+    } catch (err) {
+      toast("error", (err as Error).message ?? "Refund failed");
+    }
+  }
+
+  // ── Toast helpers ──────────────────────────────────────────────────────────
+  const toast = useCallback((type: ToastMessage["type"], text: string) => {
+    const id = uuid();
+    setToasts((prev) => [...prev, { id, type, text }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4500);
+  }, []);
+
+  // ── Data fetchers ──────────────────────────────────────────────────────────
+  const fetchUsers = useCallback(async (): Promise<User[]> => {
+    try {
+      const data = await api<User[]>("/api/users");
+      setUsers(data);
+      return data;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const fetchRequests = useCallback(async (uid: number) => {
+    try {
+      const data = await api<MoneyRequest[]>(`/api/requests/${uid}`);
+      setRequests(data);
+    } catch {
+      //
+    }
+  }, []);
+
+  const refreshBalance = useCallback(async () => {
+    const data = await fetchUsers();
+    if (selectedUser) {
+      const updated = data.find((u) => u.id === selectedUser.id);
+      if (updated) setSelectedUser(updated);
+    }
+    if (selectedUser) fetchRequests(selectedUser.id);
+    setTxRefresh((n) => n + 1);
+  }, [fetchUsers, fetchRequests, selectedUser]);
+
+  // ── Bootstrap ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    // Wake up free-tier hosting
+    api("/api/health").catch(() => {});
+
+    fetchUsers().then((data) => {
+      if (data.length > 0) setSelectedUser(data[0]);
+    });
+  }, [fetchUsers]);
 
   useEffect(() => {
     if (selectedUser) {
-      refreshAll(selectedUser.id);
-      loadTxs(selectedUser.id, true);
-    } else { setTxs([]); setRequests([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedUser?.id]);
-
-  useEffect(() => {
-    if (selectedUser) loadTxs(selectedUser.id, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [direction, category, debouncedQ]);
-
-  const unread = notifs.filter((n) => !n.read).length;
-  const totals = useMemo(() => {
-    let inflow = 0, outflow = 0;
-    for (const t of txs) {
-      if (t.senderId === selectedUser?.id) outflow += t.amount;
-      else inflow += t.amount;
+      fetchRequests(selectedUser.id);
+      setSplitIds([]);
     }
-    return { inflow, outflow };
-  }, [txs, selectedUser?.id]);
+  }, [selectedUser, fetchRequests]);
 
+  // ── Seed handler ───────────────────────────────────────────────────────────
+  async function handleSeed() {
+    setSeeding(true);
+    try {
+      const res = await api<{ success: boolean; message: string }>("/api/seed", { method: "POST" });
+      toast(res.success ? "success" : "warn", res.message);
+      const data = await fetchUsers();
+      if (data.length > 0) setSelectedUser(data[0]);
+    } catch {
+      toast("error", "Seed failed — is the backend running?");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  // ── Send money ─────────────────────────────────────────────────────────────
+  function requestSend(e: React.FormEvent) {
+    e.preventDefault();
+    const cents = Math.round(parseFloat(sendAmount) * 100);
+    if (!selectedUser || !sendTarget || !Number.isFinite(cents) || cents <= 0) return;
+    const receiver = users.find((u) => u.id === parseInt(sendTarget));
+    setConfirm({
+      title:       `Send to ${receiver?.name ?? "recipient"}`,
+      description: `${sendMemo.trim() ? `"${sendMemo.trim()}"` : "Funds will be transferred immediately."}`,
+      amountLabel: fmtBDT(cents),
+      onConfirm:   () => executeSend(parseInt(sendTarget), cents),
+    });
+  }
+
+  async function executeSend(receiverId: number, cents: number) {
+    setLoading(true);
+    try {
+      await api("/api/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
+        body: JSON.stringify({
+          senderId:   selectedUser!.id,
+          receiverId,
+          amount:     cents,
+          memo:       sendMemo.trim() || undefined,
+          category:   sendCategory,
+        }),
+      });
+      toast("success", `Sent ${fmtBDT(cents)} successfully`);
+      setSendAmount(""); setSendMemo("");
+      refreshBalance();
+    } catch (err) {
+      toast("error", (err as Error).message ?? "Transfer failed");
+      throw err; // re-throw so ConfirmModal closes correctly
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Request money ──────────────────────────────────────────────────────────
+  async function handleRequest(e: React.FormEvent) {
+    e.preventDefault();
+    const cents = Math.round(parseFloat(reqAmount) * 100);
+    if (!selectedUser || !reqTarget || !Number.isFinite(cents) || cents <= 0) return;
+    setLoading(true);
+    try {
+      await api("/api/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requesterId: selectedUser.id,
+          payerId:     parseInt(reqTarget),
+          amount:      cents,
+          note:        reqNote.trim() || undefined,
+        }),
+      });
+      toast("success", `Requested ${fmtBDT(cents)}`);
+      setReqAmount(""); setReqNote("");
+    } catch (err) {
+      toast("error", (err as Error).message ?? "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Pay a request ──────────────────────────────────────────────────────────
+  function requestPay(req: MoneyRequest) {
+    setConfirm({
+      title:       `Pay ${req.requester.name}`,
+      description: req.note ? `Note: "${req.note}"` : "This will settle the pending request.",
+      amountLabel: fmtBDT(req.amount),
+      onConfirm:   () => executePay(req.id),
+    });
+  }
+
+  async function executePay(requestId: number) {
+    try {
+      await api(`/api/request/${requestId}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
+        body: JSON.stringify({ payerId: selectedUser!.id }),
+      });
+      toast("success", "Request paid!");
+      refreshBalance();
+    } catch (err) {
+      toast("error", (err as Error).message ?? "Payment failed");
+      throw err;
+    }
+  }
+
+  // ── Reject a request ───────────────────────────────────────────────────────
+  async function handleReject(requestId: number) {
+    try {
+      await api(`/api/request/${requestId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payerId: selectedUser!.id }),
+      });
+      toast("warn", "Request declined");
+      setRequests((prev) => prev.filter((r) => r.id !== requestId));
+    } catch (err) {
+      toast("error", (err as Error).message ?? "Reject failed");
+    }
+  }
+
+  // ── Split bill ─────────────────────────────────────────────────────────────
   const splitPreview = useMemo(() => {
     const total = parseFloat(splitTotal);
     if (!Number.isFinite(total) || total <= 0 || splitIds.length === 0) return null;
-    const totalCents = Math.round(total * 100);
-    const share = Math.floor(totalCents / splitIds.length);
-    return { share, remainder: totalCents - share * splitIds.length, totalCents };
+    const cents    = Math.round(total * 100);
+    const share    = Math.floor(cents / splitIds.length);
+    const rem      = cents - share * splitIds.length;
+    return { share, rem, cents };
   }, [splitTotal, splitIds]);
 
-  async function run(_label: string, fn: () => Promise<void>) {
-    setLoading(true);
-    try { await fn(); }
-    catch (e) { showMessage("error", e instanceof Error ? e.message : "Action failed"); }
-    finally { setLoading(false); }
+  function requestSplit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!splitPreview || splitIds.length === 0) return;
+    setConfirm({
+      title:       `Split ৳${splitTotal} among ${splitIds.length} people`,
+      description: "Each person will be charged their share immediately.",
+      amountLabel: fmtBDT(splitPreview.cents),
+      onConfirm:   () => executeSplit(splitPreview.cents),
+    });
   }
-  const toCents = (v: string) => Math.round(parseFloat(v) * 100);
 
-  // ---------- Loading state ----------
-  if (!selectedUser && users.length === 0) {
+  async function executeSplit(totalCents: number) {
+    setLoading(true);
+    try {
+      await api("/api/split", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
+        body: JSON.stringify({
+          initiatorId:   selectedUser!.id,
+          recipientIds:  splitIds,
+          totalAmount:   totalCents,
+          memo:          splitMemo.trim() || undefined,
+          category:      splitCat,
+        }),
+      });
+      toast("success", `Split ${fmtBDT(totalCents)} among ${splitIds.length} people`);
+      setSplitIds([]); setSplitTotal(""); setSplitMemo("");
+      refreshBalance();
+    } catch (err) {
+      toast("error", (err as Error).message ?? "Split failed");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Low balance warning ────────────────────────────────────────────────────
+  const lowBalance = selectedUser !== null && selectedUser.balance < LOW_BALANCE_THRESHOLD_CENTS;
+
+  // ── Others list (excludes current user) ───────────────────────────────────
+  const others = users.filter((u) => u.id !== selectedUser?.id);
+
+  // ── Loading screen ─────────────────────────────────────────────────────────
+  if (users.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-10">
-        <div className="glass rounded-3xl p-10 max-w-md w-full text-center space-y-5">
-          <div className="mx-auto w-14 h-14 rounded-2xl bg-amber-400/10 border border-amber-400/30 flex items-center justify-center">
-            <Wallet className="w-7 h-7 text-amber-400" />
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="glass rounded-3xl p-10 max-w-md w-full text-center space-y-6">
+          <div className="mx-auto w-14 h-14 rounded-2xl bg-[var(--primary)]/10 border border-[var(--primary)]/25 flex items-center justify-center">
+            <Wallet className="w-7 h-7 text-[var(--primary)]" />
           </div>
-          <h2 className="text-xl font-semibold text-amber-50">Loading wallet</h2>
-          <div className="space-y-2"><Skeleton className="h-3 w-3/4 mx-auto" /><Skeleton className="h-3 w-1/2 mx-auto" /></div>
+          <div>
+            <h2 className="text-xl font-semibold text-[var(--foreground)]">Connecting to wallet…</h2>
+            <p className="text-[var(--muted-foreground)] text-sm mt-1">
+              Waking up the backend. This may take up to 30 s on free-tier hosting.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-3/4 mx-auto" />
+            <Skeleton className="h-3 w-1/2 mx-auto" />
+          </div>
+          <div className="flex items-center justify-center gap-2 text-xs text-[var(--muted-foreground)]">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>No users found?</span>
+            <Button variant="primary" size="sm" loading={seeding} onClick={handleSeed}>
+              Seed demo data
+            </Button>
+          </div>
         </div>
       </div>
     );
   }
 
-  // ---------- Handlers (money) ----------
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || !sendTargetId || !sendAmount) return;
-    run("Transfer", async () => {
-      await api("/transfer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
-        body: JSON.stringify({
-          senderId: selectedUser.id, receiverId: parseInt(sendTargetId),
-          amount: toCents(sendAmount), memo: sendMemo.trim() || undefined, category: sendCat,
-        }),
-      });
-      showMessage("success", `Sent ${sendAmount} BDT`);
-      setSendAmount(""); setSendMemo("");
-      refreshAll(selectedUser.id); loadTxs(selectedUser.id, true);
-    });
-  };
-
-  const handleRequest = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || !reqTargetId || !reqAmount) return;
-    run("Request", async () => {
-      await api("/request", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requesterId: selectedUser.id, payerId: parseInt(reqTargetId),
-          amount: toCents(reqAmount), note: reqNote.trim() || undefined,
-        }),
-      });
-      showMessage("success", `Requested ${reqAmount} BDT`);
-      setReqAmount(""); setReqNote("");
-      refreshAll(selectedUser.id);
-    });
-  };
-
-  const payRequest = (id: number) => {
-    if (!selectedUser) return;
-    run("Pay", async () => {
-      await api(`/request/${id}/pay`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
-        body: JSON.stringify({ payerId: selectedUser.id }),
-      });
-      showMessage("success", "Request paid");
-      refreshAll(selectedUser.id); loadTxs(selectedUser.id, true);
-    });
-  };
-
-  const rejectRequest = (id: number) => {
-    if (!selectedUser) return;
-    run("Reject", async () => {
-      await api(`/request/${id}/reject`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payerId: selectedUser.id }),
-      });
-      showMessage("success", "Request declined");
-      refreshAll(selectedUser.id);
-    });
-  };
-
-  const handleSplit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || splitIds.length === 0 || !splitTotal) return;
-    run("Split", async () => {
-      const data = await api<{ recipientCount: number }>("/split", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
-        body: JSON.stringify({
-          initiatorId: selectedUser.id, recipientIds: splitIds,
-          totalAmount: toCents(splitTotal), category: sendCat,
-        }),
-      });
-      showMessage("success", `Split across ${data.recipientCount} people`);
-      setSplitTotal(""); setSplitIds([]);
-      refreshAll(selectedUser.id); loadTxs(selectedUser.id, true);
-    });
-  };
-
-  const handleSchedule = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || !schedTarget || !schedAmount || !schedWhen) return;
-    run("Schedule", async () => {
-      await api("/scheduled", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
-        body: JSON.stringify({
-          senderId: selectedUser.id, receiverId: parseInt(schedTarget),
-          amount: toCents(schedAmount),
-          executeAt: new Date(schedWhen).toISOString(), category: "TRANSFER",
-        }),
-      });
-      showMessage("success", "Payment scheduled");
-      setSchedAmount(""); setSchedWhen("");
-      refreshAll(selectedUser.id);
-    });
-  };
-
-  const settleNow = () => {
-    run("Settle", async () => {
-      const data = await api<{ settled: number; skipped: number }>("/scheduled/settle", { method: "POST" });
-      showMessage("success", `Settled ${data.settled}, ${data.skipped} still pending`);
-      if (selectedUser) { refreshAll(selectedUser.id); loadTxs(selectedUser.id, true); }
-    });
-  };
-
-  const issueQR = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || !qrAmount) return;
-    run("QR", async () => {
-      const data = await api<{ code: string }>("/qr/issue", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiverId: selectedUser.id, amount: toCents(qrAmount) }),
-      });
-      setQrCode(data.code);
-      showMessage("success", "Pay-code created — share it with the sender");
-    });
-  };
-
-  const redeemQR = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || !qrRedeem.trim()) return;
-    run("Redeem", async () => {
-      await api("/qr/redeem", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
-        body: JSON.stringify({ senderId: selectedUser.id, code: qrRedeem.trim() }),
-      });
-      showMessage("success", "QR payment completed");
-      setQrRedeem("");
-      refreshAll(selectedUser.id); loadTxs(selectedUser.id, true);
-    });
-  };
-
-  const saveContact = (contactId: number) => {
-    if (!selectedUser) return;
-    run("Save", async () => {
-      await api("/contacts", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerId: selectedUser.id, contactId }),
-      });
-      showMessage("success", "Payee saved");
-      refreshAll(selectedUser.id);
-    });
-  };
-
-  const createGoal = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser || !goalName.trim() || !goalTarget) return;
-    run("Goal", async () => {
-      await api("/goals", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: selectedUser.id, name: goalName.trim(), targetAmount: toCents(goalTarget) }),
-      });
-      showMessage("success", `Goal created`);
-      setGoalName(""); setGoalTarget("");
-      refreshAll(selectedUser.id);
-    });
-  };
-
-  const depositGoal = (goalId: number) => {
-    if (!selectedUser) return;
-    const raw = goalDeposits[goalId];
-    if (!raw || !Number.isFinite(parseFloat(raw)) || parseFloat(raw) <= 0) {
-      showMessage("error", "Enter a valid deposit amount"); return;
-    }
-    run("Deposit", async () => {
-      await api(`/goals/${goalId}/deposit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uuid() },
-        body: JSON.stringify({ userId: selectedUser.id, amount: toCents(raw) }),
-      });
-      showMessage("success", "Saved into goal");
-      setGoalDeposits((p) => ({ ...p, [goalId]: "" }));
-      refreshAll(selectedUser.id); loadTxs(selectedUser.id, true);
-    });
-  };
-
-  const markAllRead = () => {
-    if (!selectedUser) return;
-    api(`/notifications/${selectedUser.id}/read-all`, { method: "POST" })
-      .then(() => refreshAll(selectedUser.id)).catch(() => {});
-  };
-
-  const others = users.filter((u) => u.id !== selectedUser?.id);
-  if (!selectedUser) return null;
-
+  // ── Main layout ─────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen p-4 md:p-10">
-      <motion.div initial="hidden" animate="show" className="max-w-6xl mx-auto space-y-6">
-        <header className="glass rounded-2xl px-5 py-4 flex flex-wrap gap-3 justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-[#1A1400]" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-amber-50">PSTU Wallet v2</h1>
-              <p className="text-xs text-slate-400 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-400" /> Rate-limited · Idempotent
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button onClick={markAllRead} title="Mark read"
-              className="relative w-10 h-10 rounded-xl border border-[#2B3560] flex items-center justify-center hover:border-amber-400/40">
-              <Bell className="w-4 h-4 text-amber-200" />
-              {unread > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-amber-400 text-[#1A1400] text-[11px] font-bold flex items-center justify-center">{unread}</span>
-              )}
-            </button>
-            <select aria-label="Select user"
-              className="bg-[#0B1026] border border-[#2B3560] rounded-xl px-3 py-2 text-amber-50 outline-none cursor-pointer"
-              value={selectedUser?.id || ""}
-              onChange={(e) => { const u = users.find((x) => x.id === parseInt(e.target.value)); if (u) setSelectedUser(u); }}>
-              {users.map((u) => (<option key={u.id} value={u.id} className="bg-slate-900">{u.name}</option>))}
-            </select>
-          </div>
-        </header>
-        <AnimatePresence>
-          {message && (
-            <motion.div key={message.text} variants={toastAnim} initial="hidden" animate="show" exit="exit"
-              className={`rounded-2xl px-5 py-3 flex items-center gap-3 border text-sm ${
-                message.type === "success" ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-200"
-                : "bg-rose-500/10 border-rose-400/30 text-rose-200"}`}>
-              {message.type === "success" ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}{message.text}
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <motion.div variants={fadeUp} className="glass rounded-3xl overflow-hidden">
-          <div className="brand-stripe h-1.5" />
-          <div className="p-6 md:p-8 flex flex-wrap items-end justify-between gap-6">
-            <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400">Balance · {selectedUser?.name}</p>
-              <p className="tabular-nums text-4xl md:text-5xl font-bold text-amber-50 mt-2">
-                {selectedUser ? formatCurrency(selectedUser.balance) : "—"}
-              </p>
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <StatBadge tone="positive">In {formatCurrency(totals.inflow)}</StatBadge>
-              <StatBadge tone="warn">Out {formatCurrency(totals.outflow)}</StatBadge>
-            </div>
-          </div>
-          {insights && insights.breakdown.length > 0 && (
-            <div className="px-6 md:px-8 pb-6">
-              <div className="flex h-2.5 rounded-full overflow-hidden bg-indigo-950/60">
-                {insights.breakdown.slice(0, 6).map((b) => (
-                  <div key={b.category} title={`${b.category} ${b.pct}%`} className="h-full"
-                    style={{ width: `${b.pct}%`, background: CAT_COLORS[b.category] ?? "#64748B" }} />
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {insights.breakdown.slice(0, 6).map((b) => (
-                  <span key={b.category} className="text-[11px] text-slate-300">{b.category} {b.pct}% · </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </motion.div>
+    <>
+      <ConfirmModal state={confirm} onClose={() => setConfirm(null)} />
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <GlassCard title="Send money" icon={<ArrowRightLeft className="w-4 h-4" />}>
-            <form onSubmit={handleSend} className="space-y-3">
+      <div className="min-h-screen p-4 md:p-8">
+        <div className="max-w-5xl mx-auto space-y-6">
+
+          {/* ── Header ────────────────────────────────────────────────────── */}
+          <header className="glass rounded-2xl px-5 py-4 flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[var(--primary)]/10 border border-[var(--primary)]/25 flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-[var(--primary)]" />
+              </div>
               <div>
-                <label className={labelCls}>To</label>
-                <select className={inputCls} value={sendTargetId} onChange={(e) => setSendTargetId(e.target.value)} required>
-                  <option value="">Choose recipient</option>
-                  {others.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
-                </select>
+                <h1 className="text-base font-bold tracking-tight text-[var(--foreground)]">PSTU Wallet</h1>
+                <p className="text-[10px] text-[var(--muted-foreground)] uppercase tracking-widest">
+                  Money Movement · Hackathon Build
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className={labelCls}>Amount (BDT)</label>
-                  <input className={inputCls} value={sendAmount} onChange={(e) => setSendAmount(e.target.value)} placeholder="500" inputMode="decimal" required /></div>
-                <div><label className={labelCls}>Category</label>
-                  <select className={inputCls} value={sendCat} onChange={(e) => setSendCat(e.target.value)}>
-                    {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
-                  </select></div>
-              </div>
-              <div><label className={labelCls}>Memo</label>
-                <input className={inputCls} value={sendMemo} onChange={(e) => setSendMemo(e.target.value)} maxLength={140} placeholder="Dinner…" /></div>
-              <button className={btnGold} disabled={loading}>Send instantly</button>
-            </form>
-          </GlassCard>
-          <GlassCard title="Request money" icon={<HandCoins className="w-4 h-4" />}>
-            <form onSubmit={handleRequest} className="space-y-3">
-              <div><label className={labelCls}>From</label>
-                <select className={inputCls} value={reqTargetId} onChange={(e) => setReqTargetId(e.target.value)} required>
-                  <option value="">Choose payer</option>
-                  {others.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
-                </select></div>
-              <div><label className={labelCls}>Amount (BDT)</label>
-                <input className={inputCls} value={reqAmount} onChange={(e) => setReqAmount(e.target.value)} placeholder="1200" inputMode="decimal" required /></div>
-              <div><label className={labelCls}>Note</label>
-                <input className={inputCls} value={reqNote} onChange={(e) => setReqNote(e.target.value)} maxLength={140} placeholder="Lunch…" /></div>
-              <button className={btnGold} disabled={loading}>Send request</button>
-            </form>
-          </GlassCard>
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-6">
-          <GlassCard title="Split bill" icon={<Users className="w-4 h-4" />}>
-            <form onSubmit={handleSplit} className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {others.map((u) => (
-                  <button type="button" key={u.id}
-                    onClick={() => setSplitIds((p) => p.includes(u.id) ? p.filter((x) => x !== u.id) : [...p, u.id])}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${
-                      splitIds.includes(u.id) ? "bg-amber-400 text-[#1A1400] border-amber-400" : "border-[#2B3560] text-slate-300"}`}>
-                    {u.name}
-                  </button>
-                ))}
-              </div>
-              <div><label className={labelCls}>Total (BDT)</label>
-                <input className={inputCls} value={splitTotal} onChange={(e) => setSplitTotal(e.target.value)} placeholder="1500" inputMode="decimal" required /></div>
-              {splitPreview && (
-                <p className="text-xs text-slate-400">{formatCurrency(splitPreview.share)} each{ splitPreview.remainder > 0 ? " + remainder to first" : ""}</p>
-              )}
-              <button className={btnGold} disabled={loading}>Split payment</button>
-            </form>
-          </GlassCard>
-          <GlassCard title="Schedule + QR" icon={<CalendarClock className="w-4 h-4" />}
-            action={<button className={btnGhost} onClick={settleNow} disabled={loading}>Settle due</button>}>
-            <form onSubmit={handleSchedule} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <select className={inputCls} value={schedTarget} onChange={(e) => setSchedTarget(e.target.value)} required>
-                  <option value="">To…</option>
-                  {others.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
-                </select>
-                <input className={inputCls} value={schedAmount} onChange={(e) => setSchedAmount(e.target.value)} placeholder="BDT" inputMode="decimal" required />
-              </div>
-              <input type="datetime-local" className={inputCls} value={schedWhen} onChange={(e) => setSchedWhen(e.target.value)} required />
-              <button className={btnGold} disabled={loading}>Schedule</button>
-            </form>
-            <div className="border-t border-[#2B3560] mt-4 pt-4 space-y-3">
-              <form onSubmit={issueQR} className="flex gap-2">
-                <input className={inputCls} value={qrAmount} onChange={(e) => setQrAmount(e.target.value)} placeholder="QR amount" inputMode="decimal" required />
-                <button className={btnGhost}><QrCode className="w-4 h-4" /> Issue</button>
-              </form>
-              {qrCode && (<p className="text-xs font-mono break-all bg-[#0B1026] border border-dashed border-amber-400/40 rounded-xl p-3 text-amber-200">{qrCode}</p>)}
-              <form onSubmit={redeemQR} className="flex gap-2">
-                <input className={inputCls} value={qrRedeem} onChange={(e) => setQrRedeem(e.target.value)} placeholder="Paste pay-code" required />
-                <button className={btnGhost}>Pay</button>
-              </form>
             </div>
-          </GlassCard>
-        </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <GlassCard title={`Incoming requests (${requests.length})`} icon={<HandCoins className="w-4 h-4" />}>
-            {requests.length === 0 ? (<p className="text-sm text-slate-500">No pending requests.</p>) : (
-              <div className="space-y-2.5">
-                {requests.map((rq) => (
-                  <div key={rq.id} className="flex items-center justify-between gap-3 bg-[#0B1026]/60 border border-[#2B3560] rounded-2xl px-4 py-3">
-                    <div>
-                      <p className="text-sm font-semibold text-amber-50">{rq.requester?.name} · {formatCurrency(rq.amount)}</p>
-                      {rq.note && <p className="text-xs text-slate-400">“{rq.note}”</p>}
-                    </div>
-                    <div className="flex gap-2">
-                      <button className={btnGold} onClick={() => payRequest(rq.id)} disabled={loading}>Pay</button>
-                      <button className={btnGhost} onClick={() => rejectRequest(rq.id)} disabled={loading}>Decline</button>
-                    </div>
-                  </div>
-                ))}
+            <div className="flex items-center gap-3">
+              {selectedUser && (
+                <NotificationPanel userId={selectedUser.id} />
+              )}
+              <span className="text-[var(--muted-foreground)] text-xs font-medium hidden sm:inline">
+                Simulating as
+              </span>
+              <div className="relative">
+                <select
+                  aria-label="Select user"
+                  className="appearance-none bg-[var(--muted)] border border-[var(--border)] hover:border-[var(--primary)]/40 rounded-xl pl-4 pr-8 py-2 text-sm font-semibold text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]/40 cursor-pointer transition-colors"
+                  value={selectedUser?.id ?? ""}
+                  onChange={(e) => {
+                    const u = users.find((u) => u.id === parseInt(e.target.value));
+                    if (u) setSelectedUser(u);
+                  }}
+                >
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id} className="bg-[var(--card)]">
+                      {u.name}{u.phone ? ` · ${u.phone}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] text-xs">▾</span>
               </div>
+            </div>
+          </header>
+
+          {/* ── Toast queue ───────────────────────────────────────────────── */}
+          <div className="space-y-2" aria-live="polite">
+            <AnimatePresence>
+              {toasts.map((t) => <ToastBanner key={t.id} msg={t} />)}
+            </AnimatePresence>
+          </div>
+
+          {/* ── Low-balance warning ───────────────────────────────────────── */}
+          <AnimatePresence>
+            {lowBalance && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="flex items-center gap-3 bg-amber-500/10 border border-amber-400/30 rounded-2xl px-5 py-3.5"
+                role="alert"
+              >
+                <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                <p className="text-sm text-amber-200 flex-1">
+                  Low balance — only <span className="font-bold tabular-nums">{fmtBDT(selectedUser!.balance)}</span> remaining.
+                  Consider topping up via an incoming transfer.
+                </p>
+              </motion.div>
             )}
-            {requestsOut.length > 0 && (
-              <div className="mt-4 pt-3 border-t border-[#2B3560]">
-                <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">My outgoing</p>
-                {requestsOut.slice(0, 5).map((rq) => (
-                  <p key={rq.id} className="text-xs text-slate-400 py-1">
-                    → {rq.payer?.name} · {formatCurrency(rq.amount)} · <StatBadge tone={rq.status === "PENDING" ? "gold" : rq.status === "PAID" ? "positive" : "warn"}>{rq.expired ? "EXPIRED" : rq.status}</StatBadge>
+          </AnimatePresence>
+
+          {/* ── Balance card + pending requests ───────────────────────────── */}
+          <div className="grid md:grid-cols-2 gap-6">
+
+            {/* Balance card */}
+            <GlassCard className="relative overflow-hidden">
+              <div className="absolute inset-x-0 top-0 h-[2px] brand-stripe" />
+              <div className="flex justify-between items-start mb-8">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-[var(--primary)]" />
+                  <p className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-widest">
+                    Available Balance
                   </p>
-                ))}
+                </div>
+                <Badge tone="positive">
+                  <Sparkles className="w-3 h-3" /> Live
+                </Badge>
               </div>
-            )}
-          </GlassCard>
-          <GlassCard title={`Savings goals (${goals.length})`} icon={<PiggyBank className="w-4 h-4" />}>
-            <form onSubmit={createGoal} className="flex gap-2 mb-3">
-              <input className={inputCls} value={goalName} onChange={(e) => setGoalName(e.target.value)} placeholder="Goal name" maxLength={60} required />
-              <input className={inputCls} value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} placeholder="BDT" inputMode="decimal" required />
-              <button className={btnGold}>Add</button>
-            </form>
-            {goals.length === 0 ? (<p className="text-sm text-slate-500">No goals yet — earmark savings here.</p>) : (
-              <div className="space-y-3">
-                {goals.slice(0, 4).map((g) => {
-                  const pct = Math.min(100, Math.round((g.savedAmount / Math.max(1, g.targetAmount)) * 100));
-                  return (
-                    <div key={g.id} className="bg-[#0B1026]/60 border border-[#2B3560] rounded-2xl p-3.5">
-                      <div className="flex justify-between text-sm">
-                        <span className="font-semibold text-amber-50">{g.name} {g.completedAt ? "🎉" : ""}</span>
-                        <span className="tabular-nums text-slate-300">{formatCurrency(g.savedAmount)} / {formatCurrency(g.targetAmount)}</span>
+
+              <h2 className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-[var(--foreground)]">
+                {selectedUser ? fmtBDT(selectedUser.balance) : "—"}
+              </h2>
+
+              <div className="mt-10 pt-6 border-t border-[var(--border)]/50 flex justify-between items-end">
+                <div className="space-y-1">
+                  <p className="text-[var(--muted-foreground)] text-[10px] uppercase tracking-widest">Account Holder</p>
+                  <p className="font-semibold text-lg text-[var(--foreground)]">{selectedUser?.name}</p>
+                  {selectedUser?.phone && (
+                    <p className="flex items-center gap-1.5 text-[var(--muted-foreground)] text-sm font-mono">
+                      <Phone className="w-3 h-3" />{selectedUser.phone}
+                    </p>
+                  )}
+                </div>
+                <p className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted-foreground)]">
+                  <Hash className="w-3 h-3" />
+                  {selectedUser?.id.toString().padStart(6, "0")}
+                </p>
+              </div>
+            </GlassCard>
+
+            {/* Pending requests */}
+            <GlassCard>
+              <div className="flex justify-between items-center mb-5">
+                <div className="flex items-center gap-2">
+                  <HandCoins className="w-5 h-5 text-[var(--primary)]" />
+                  <h3 className="text-base font-semibold text-[var(--foreground)]">Pending Requests</h3>
+                </div>
+                <Badge tone={requests.length > 0 ? "warn" : "neutral"}>
+                  {requests.length}
+                </Badge>
+              </div>
+
+              <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                {requests.length === 0 ? (
+                  <EmptyState
+                    icon={<HandCoins className="w-5 h-5 text-[var(--muted-foreground)]" />}
+                    title="No pending requests"
+                  />
+                ) : (
+                  <motion.ul variants={stagger} initial="hidden" animate="show">
+                    <AnimatePresence>
+                      {requests.map((req) => (
+                        <motion.li
+                          key={req.id}
+                          variants={fadeUp}
+                          exit={{ opacity: 0, x: 20, transition: { duration: 0.2 } }}
+                          className="bg-[var(--muted)] border border-[var(--border)] hover:border-[var(--primary)]/30 rounded-2xl p-4 mb-3 last:mb-0 transition-colors"
+                        >
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <p className="font-semibold text-[var(--foreground)] text-sm">
+                                {req.requester.name}
+                              </p>
+                              {req.requester.phone && (
+                                <p className="text-[var(--muted-foreground)] text-xs font-mono">
+                                  {req.requester.phone}
+                                </p>
+                              )}
+                              {req.note && (
+                                <p className="text-[var(--muted-foreground)] text-xs mt-0.5 italic">
+                                  "{req.note}"
+                                </p>
+                              )}
+                            </div>
+                            <p className="text-[var(--negative)] font-bold tabular-nums text-sm">
+                              {fmtBDT(req.amount)}
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => requestPay(req)}
+                              disabled={loading}
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              Pay
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => handleReject(req.id)}
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              Decline
+                            </Button>
+                          </div>
+                        </motion.li>
+                      ))}
+                    </AnimatePresence>
+                  </motion.ul>
+                )}
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* ── Action tabs ────────────────────────────────────────────────── */}
+          <GlassCard className="!p-0 overflow-hidden">
+            {/* Tab bar */}
+            <div className="flex overflow-x-auto border-b border-[var(--border)] px-1 pt-1 gap-1">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  className={`flex items-center gap-2 px-4 py-3 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${
+                    tab === t.id
+                      ? "bg-[var(--muted)] text-[var(--primary)] border-b-2 border-[var(--primary)]"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)]/50"
+                  }`}
+                >
+                  {t.icon}
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-6 md:p-8">
+              <AnimatePresence mode="wait">
+                {/* ── SEND ───────────────────────────────────────────────── */}
+                {tab === "send" && (
+                  <motion.form
+                    key="send"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                    onSubmit={requestSend}
+                    className="space-y-4"
+                  >
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="send-target">Recipient</Label>
+                        <Select
+                          id="send-target"
+                          required
+                          value={sendTarget}
+                          onChange={(e) => setSendTarget(e.target.value)}
+                        >
+                          <option value="" disabled>Select user</option>
+                          {others.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name}{u.phone ? ` · ${u.phone}` : ""}
+                            </option>
+                          ))}
+                        </Select>
                       </div>
-                      <div className="h-2 rounded-full bg-indigo-950 mt-2 overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-amber-400 to-emerald-400" style={{ width: `${pct}%` }} />
+                      <div>
+                        <Label htmlFor="send-amount">Amount (BDT)</Label>
+                        <Input
+                          id="send-amount"
+                          type="number"
+                          step="0.01"
+                          min={1}
+                          required
+                          value={sendAmount}
+                          onChange={(e) => setSendAmount(e.target.value)}
+                          placeholder="e.g. 500"
+                        />
                       </div>
-                      {!g.completedAt && (
-                        <form onSubmit={(e) => { e.preventDefault(); depositGoal(g.id); }} className="flex gap-2 mt-2.5">
-                          <input className={inputCls} value={goalDeposits[g.id] ?? ""} onChange={(e) => setGoalDeposits((p) => ({ ...p, [g.id]: e.target.value }))} placeholder="Deposit BDT" inputMode="decimal" />
-                          <button className={btnGhost}>Save</button>
-                        </form>
-                      )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </GlassCard>
-        </div>
-
-        <GlassCard title="Activity" icon={<ArrowRightLeft className="w-4 h-4" />}
-          action={
-            <div className="flex gap-1.5">
-              {(["all", "requests", "scheduled"] as const).map((t) => (
-                <button key={t} onClick={() => setTab(t)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase ${tab === t ? "bg-amber-400 text-[#1A1400]" : "text-slate-400"}`}>
-                  {t}
-                </button>
-              ))}
-            </div>
-          }>
-          {tab === "all" && (
-            <>
-              <div className="flex flex-wrap gap-2 mb-4">
-                <div className="relative flex-1 min-w-40">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                  <input className={`${inputCls} pl-9`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search memos…" maxLength={60} />
-                </div>
-                <select className="bg-[#0B1026] border border-[#2B3560] rounded-xl px-3 py-2 text-xs text-amber-50" value={direction} onChange={(e) => setDirection(e.target.value)}>
-                  <option value="all">All</option><option value="in">In</option><option value="out">Out</option>
-                </select>
-                <select className="bg-[#0B1026] border border-[#2B3560] rounded-xl px-3 py-2 text-xs text-amber-50" value={category} onChange={(e) => setCategory(e.target.value)}>
-                  <option value="ALL">All cats</option>
-                  {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
-                </select>
-              </div>
-              {txs.length === 0 ? (<p className="text-sm text-slate-500 text-center py-10">No transactions yet.</p>) : (
-                <div className="divide-y divide-[#2B3560]/50">
-                  {txs.map((t) => {
-                    const out = t.senderId === selectedUser?.id;
-                    const cp = out ? t.receiver : t.sender;
-                    return (
-                      <div key={t.id} className="flex items-center justify-between py-3 gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-amber-50 truncate">{out ? "Sent to" : "Got from"} {cp.name}</p>
-                          <p className="text-[11px] text-slate-500 truncate">{t.memo ? `"${t.memo}" · ` : ""}{t.category} · {new Date(t.createdAt).toLocaleString()}</p>
-                        </div>
-                        <p className={`tabular-nums font-bold text-sm ${out ? "text-rose-300" : "text-emerald-300"}`}>
-                          {out ? "-" : "+"}{formatCurrency(t.amount)}
-                        </p>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="send-cat">Category</Label>
+                        <Select
+                          id="send-cat"
+                          value={sendCategory}
+                          onChange={(e) => setSendCategory(e.target.value)}
+                        >
+                          {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </Select>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-              {txCursor && (
-                <button className={btnGhost} disabled={txLoading}
-                  onClick={() => selectedUser && loadTxs(selectedUser.id, false, txCursor)}>
-                  {txLoading ? "Loading…" : "Load more"}
-                </button>
-              )}
-            </>
-          )}
-          {tab === "requests" && (
-            <div className="space-y-2">
-              {notifs.length === 0 ? (<p className="text-sm text-slate-500 text-center py-8">Inbox empty.</p>) : (
-                notifs.slice(0, 12).map((n) => (
-                  <div key={n.id} className={`rounded-2xl border px-4 py-3 ${n.read ? "border-[#2B3560]/60 opacity-60" : "border-amber-400/25"}`}>
-                    <p className="text-sm font-semibold text-amber-50">{n.title}</p>
-                    {n.body && <p className="text-xs text-slate-400">{n.body}</p>}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-          {tab === "scheduled" && (
-            <div className="space-y-2">
-              {scheduled.length === 0 ? (<p className="text-sm text-slate-500 text-center py-8">Nothing scheduled.</p>) : (
-                scheduled.map((s) => (
-                  <p key={s.id} className="text-sm text-slate-300">{formatCurrency(s.amount)} to {s.receiver.name}</p>
-                ))
-              )}
-              <button className={btnGhost} onClick={settleNow} disabled={loading}>Settle due now</button>
-            </div>
-          )}
-        </GlassCard>
+                      <div>
+                        <Label htmlFor="send-memo">Memo (optional)</Label>
+                        <Input
+                          id="send-memo"
+                          type="text"
+                          maxLength={140}
+                          value={sendMemo}
+                          onChange={(e) => setSendMemo(e.target.value)}
+                          placeholder="What's this for?"
+                        />
+                      </div>
+                    </div>
+                    <Button type="submit" variant="primary" size="lg" loading={loading}>
+                      <ArrowRightLeft className="w-4 h-4" />
+                      Send Instantly
+                    </Button>
+                  </motion.form>
+                )}
 
-        {contacts.length > 0 && (
-          <GlassCard title="Saved payees" icon={<Star className="w-4 h-4" />}>
-            <div className="flex flex-wrap gap-2">
-              {contacts.map((c) => (
-                <button key={c.id} onClick={() => { setSendTargetId(String(c.contactId)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                  className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[#2B3560] text-amber-100 hover:border-amber-400/50">
-                  {c.nickname || c.contact?.name || `#${c.contactId}`}
-                </button>
-              ))}
+                {/* ── REQUEST ────────────────────────────────────────────── */}
+                {tab === "request" && (
+                  <motion.form
+                    key="request"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                    onSubmit={handleRequest}
+                    className="space-y-4"
+                  >
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="req-target">Request from</Label>
+                        <Select
+                          id="req-target"
+                          required
+                          value={reqTarget}
+                          onChange={(e) => setReqTarget(e.target.value)}
+                        >
+                          <option value="" disabled>Select user</option>
+                          {others.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name}{u.phone ? ` · ${u.phone}` : ""}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="req-amount">Amount (BDT)</Label>
+                        <Input
+                          id="req-amount"
+                          type="number"
+                          step="0.01"
+                          min={1}
+                          required
+                          value={reqAmount}
+                          onChange={(e) => setReqAmount(e.target.value)}
+                          placeholder="e.g. 1200"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="req-note">Note (optional)</Label>
+                      <Input
+                        id="req-note"
+                        type="text"
+                        maxLength={140}
+                        value={reqNote}
+                        onChange={(e) => setReqNote(e.target.value)}
+                        placeholder='e.g. "Dinner last Friday"'
+                      />
+                    </div>
+                    <Button type="submit" variant="primary" size="lg" loading={loading}>
+                      <HandCoins className="w-4 h-4" />
+                      Send Request
+                    </Button>
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      Requests expire after 7 days if unpaid.
+                    </p>
+                  </motion.form>
+                )}
+
+                {/* ── SPLIT ──────────────────────────────────────────────── */}
+                {tab === "split" && (
+                  <motion.form
+                    key="split"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                    onSubmit={requestSplit}
+                    className="space-y-5"
+                  >
+                    <div>
+                      <Label>Split with</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {others.map((u) => {
+                          const active = splitIds.includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() =>
+                                setSplitIds((prev) =>
+                                  prev.includes(u.id) ? prev.filter((x) => x !== u.id) : [...prev, u.id]
+                                )
+                              }
+                              className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                                active
+                                  ? "bg-[var(--primary)] text-[var(--primary-foreground)] border-[var(--primary)] shadow-lg shadow-[var(--primary)]/20"
+                                  : "bg-[var(--muted)] text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]"
+                              }`}
+                            >
+                              {u.name}
+                              {u.phone && (
+                                <span className={`ml-2 text-xs font-mono ${active ? "opacity-70" : "text-[var(--muted-foreground)]"}`}>
+                                  {u.phone}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-[var(--muted-foreground)] mt-2">
+                        {splitIds.length === 0 ? "Tap people to include in the split" : `${splitIds.length} selected`}
+                      </p>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="split-total">Total Amount (BDT)</Label>
+                        <Input
+                          id="split-total"
+                          type="number"
+                          step="0.01"
+                          min={1}
+                          required
+                          value={splitTotal}
+                          onChange={(e) => setSplitTotal(e.target.value)}
+                          placeholder="e.g. 1500"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="split-cat">Category</Label>
+                        <Select
+                          id="split-cat"
+                          value={splitCat}
+                          onChange={(e) => setSplitCat(e.target.value)}
+                        >
+                          {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="split-memo">Memo (optional)</Label>
+                      <Input
+                        id="split-memo"
+                        type="text"
+                        maxLength={140}
+                        value={splitMemo}
+                        onChange={(e) => setSplitMemo(e.target.value)}
+                        placeholder='e.g. "Team lunch"'
+                      />
+                    </div>
+
+                    {splitPreview && (
+                      <div className="bg-[var(--primary)]/8 border border-[var(--primary)]/20 rounded-2xl p-4 text-sm text-[var(--foreground)]">
+                        Each person pays{" "}
+                        <span className="font-bold tabular-nums text-[var(--primary)]">
+                          {fmtBDT(splitPreview.share)}
+                        </span>
+                        {splitPreview.rem > 0 && (
+                          <span className="text-[var(--muted-foreground)]">
+                            {" "}(+{splitPreview.rem} paisa remainder to first recipient)
+                          </span>
+                        )}
+                        .
+                      </div>
+                    )}
+
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      size="lg"
+                      loading={loading}
+                      disabled={splitIds.length === 0}
+                    >
+                      <Users className="w-4 h-4" />
+                      Split Payment
+                    </Button>
+                  </motion.form>
+                )}
+
+                {/* ── SCHEDULED — delegates to ScheduledPanel ─────────────── */}
+                {tab === "scheduled" && selectedUser && (
+                  <motion.div
+                    key="scheduled"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <ScheduledPanel
+                      userId={selectedUser.id}
+                      users={users}
+                      onToast={toast}
+                      onBalanceRefresh={refreshBalance}
+                    />
+                  </motion.div>
+                )}
+
+                {/* ── QR — delegates to QRPanel ──────────────────────────── */}
+                {tab === "qr" && selectedUser && (
+                  <motion.div
+                    key="qr"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <QRPanel
+                      userId={selectedUser.id}
+                      onToast={toast}
+                      onBalanceRefresh={refreshBalance}
+                    />
+                  </motion.div>
+                )}
+
+                {/* ── External — delegates to ExternalPaymentsPanel ────── */}
+                {tab === "external" && selectedUser && (
+                  <motion.div
+                    key="external"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <ExternalPaymentsPanel
+                      userId={selectedUser.id}
+                      users={users}
+                      onToast={toast}
+                      onBalanceRefresh={refreshBalance}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </GlassCard>
-        )}
-        <footer className="text-center text-xs text-slate-600 pb-2">
-          PSTU Wallet v2 · Helmet + rate-limit + Zod · Daily cap 200K · Requests expire in 7 days
-        </footer>
-      </motion.div>
-    </div>
+
+          {/* ── Feature panels (insights, goals) ──────────────────────────── */}
+          {selectedUser && (
+            <div className="grid md:grid-cols-2 gap-6">
+              <SpendingInsights userId={selectedUser.id} />
+              <GoalsPanel
+                userId={selectedUser.id}
+                onToast={toast}
+                onBalanceRefresh={refreshBalance}
+              />
+            </div>
+          )}
+
+          {/* ── Transaction history ────────────────────────────────────────── */}
+          {selectedUser && (
+            <TransactionHistory
+              userId={selectedUser.id}
+              refreshToken={txRefresh}
+              onRefund={handleRefund}
+            />
+          )}
+
+        </div>
+      </div>
+    </>
   );
 }

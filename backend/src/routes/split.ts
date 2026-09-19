@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { parse, splitSchema } from "../validate.js";
-import { requireIdempotency } from "../middleware.js";
+import { fail, requireIdempotency } from "../middleware.js";
 import { assertDailyLimit, bumpDailySpent, fmtBDT, lockUser, notify } from "../money.js";
 
 export function splitRouter(prisma: PrismaClient): Router {
@@ -12,27 +12,31 @@ export function splitRouter(prisma: PrismaClient): Router {
     const idempotencyKey = req.headers["idempotency-key"] as string;
     const parsed = parse(splitSchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     const { initiatorId, recipientIds, totalAmount, memo, category } = parsed.value;
 
     const unique = Array.from(new Set(recipientIds));
     if (unique.length !== recipientIds.length) {
-      res.status(400).json({ error: "recipientIds contains duplicates" });
+      fail(res, 400, "recipientIds contains duplicates");
       return;
     }
 
+    // Split uses N+1 idempotency keys (one per leg + the initiator-debit).
+    // Replay detection only needs the first leg's key — if that exists, the
+    // whole split already landed atomically inside the same $transaction.
+    const replayKey = `${idempotencyKey}:leg:0`;
     try {
-      const existing = await prisma.transaction.findUnique({
-        where: { idempotencyKey: `${idempotencyKey}:leg:0` },
-      });
+      const existing = await prisma.transaction.findUnique({ where: { idempotencyKey: replayKey } });
       if (existing) {
         res.json({ success: true, splitTransactionIds: [existing.id], message: "Returned cached result" });
         return;
       }
+    } catch { /* fall through to the write attempt */ }
 
-      const result = await prisma.$transaction(async (tx) => {
+    try {
+      const created = await prisma.$transaction(async (tx) => {
         const initiator = await lockUser(tx, initiatorId);
         if (!initiator) throw new Error("Initiator not found");
         if (initiator.balance < totalAmount) throw new Error("Insufficient funds for full split");
@@ -49,7 +53,7 @@ export function splitRouter(prisma: PrismaClient): Router {
 
         const share = Math.floor(totalAmount / unique.length);
         const remainder = totalAmount - share * unique.length;
-        const created: { id: number }[] = [];
+        const ids: { id: number }[] = [];
         for (let i = 0; i < unique.length; i++) {
           const recipientId = unique[i] as number;
           const legAmount = share + (i === 0 ? remainder : 0);
@@ -66,19 +70,22 @@ export function splitRouter(prisma: PrismaClient): Router {
             },
           });
           await notify(tx, recipientId, "SPLIT_IN", `Split received: ${fmtBDT(legAmount)}`, memo ?? null);
-          created.push({ id: t.id });
+          ids.push({ id: t.id });
         }
-        return created;
+        return ids;
       });
 
-      res.json({ success: true, splitTransactionIds: result.map((t) => t.id), recipientCount: unique.length });
+      res.json({ success: true, splitTransactionIds: created.map((t) => t.id), recipientCount: unique.length });
     } catch (error: unknown) {
       const err = error as { code?: string; message?: string };
       if (err?.code === "P2002") {
-        res.json({ success: true, splitTransactionIds: [], message: "Returned cached result (concurrent replay)" });
+        // Concurrent replay: another worker landed the legs after our pre-check.
+        // Return the first leg's id so the caller can dedupe.
+        const existing = await prisma.transaction.findUnique({ where: { idempotencyKey: replayKey } });
+        res.json({ success: true, splitTransactionIds: existing ? [existing.id] : [], message: "Returned cached result (concurrent replay)" });
         return;
       }
-      res.status(400).json({ error: err?.message ?? "Split failed" });
+      fail(res, 400, err?.message ?? "Split failed");
     }
   });
 

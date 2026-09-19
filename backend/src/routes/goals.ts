@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { parse, goalDepositSchema, goalSchema } from "../validate.js";
-import { requireIdempotency } from "../middleware.js";
+import { fail, requireIdempotency } from "../middleware.js";
 import { fmtBDT, lockUser, notify } from "../money.js";
 
 /** Savings goals: spendable balance earmarked into a named jar. A deposit
@@ -12,7 +12,7 @@ export function goalsRouter(prisma: PrismaClient): Router {
   r.get("/:userId", async (req, res) => {
     const userId = Number(req.params.userId);
     if (!Number.isInteger(userId) || userId <= 0) {
-      res.status(400).json({ error: "Invalid user id" });
+      fail(res, 400, "Invalid user id");
       return;
     }
     res.json(await prisma.goal.findMany({ where: { userId }, orderBy: { id: "desc" } }));
@@ -21,7 +21,7 @@ export function goalsRouter(prisma: PrismaClient): Router {
   r.post("/", async (req, res) => {
     const parsed = parse(goalSchema, req.body);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.error);
       return;
     }
     const goal = await prisma.goal.create({ data: parsed.value });
@@ -33,7 +33,7 @@ export function goalsRouter(prisma: PrismaClient): Router {
     const idempotencyKey = req.headers["idempotency-key"] as string;
     const parsed = parse(goalDepositSchema, req.body);
     if (!parsed.ok || !Number.isInteger(goalId) || goalId <= 0) {
-      res.status(400).json({ error: parsed.ok ? "Invalid goal id" : parsed.error });
+      fail(res, 400, parsed.ok ? "Invalid goal id" : parsed.error);
       return;
     }
     try {
@@ -73,7 +73,7 @@ export function goalsRouter(prisma: PrismaClient): Router {
         res.json({ success: true, message: "Returned cached result (concurrent replay)" });
         return;
       }
-      res.status(400).json({ error: err?.message ?? "Deposit failed" });
+      fail(res, 400, err?.message ?? "Deposit failed");
     }
   });
 

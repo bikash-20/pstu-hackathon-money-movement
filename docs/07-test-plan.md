@@ -45,3 +45,25 @@ A concurrency test for Split Bill would extend `test-concurrency.ts` by having A
 2. **UI/UX Testing:** The frontend is manually verified. Automated tests focus exclusively on the backend API and database integrity.
 3. **Pagination / Filter / Search on Transaction History:** Out of scope for this hackathon; the history returns all rows for the user.
 4. **Performance / Load Tests:** The pessimistic-lock test covers correctness under concurrency, but I do not run benchmarks for throughput, p99 latency, or connection-pool exhaustion.
+
+---
+
+## v2 Additions — `test-v2-features.ts` (105 assertions)
+
+The v2 build added security and everyday-wallet features, each pinned by an
+assertion. Run with `npm run test:v2` (⚠️ resets the database).
+
+| # | Area | What is pinned |
+|---|---|---|
+| 1 | Zod validation & error envelope | self-transfer, negative/ fractional amounts and a missing `Idempotency-Key` all return 400 with `{ success: false, error }` |
+| 2 | Per-transfer cap & daily circuit-breaker | ৳50,000.01 rejected, ৳50,000.00 accepted; four tranches accumulate `dailySpent` to exactly ৳200,000, the fifth is refused *despite sufficient balance*, and a stale `dailyWindow` resets the tally (regression for the timezone bug in Decision 6) |
+| 3 | Memo & category | trimmed memo + category persisted; unknown category and >140-char memo rejected; history filters by category and full-text-searches memos |
+| 4 | Money-request lifecycle | third party cannot reject; payer can reject (`REJECTED`); rejected request cannot be paid; backdated request cannot be paid, is lazily flipped to `EXPIRED` on read, and no balance moves |
+| 5 | Scheduled transfers | past `executeAt` rejected; funds do **not** move before due time; settle skips not-yet-due rows, then debits/credits exactly once and flips the row to `COMPLETED` |
+| 6 | QR pay-codes | invalid issue payloads rejected; issuance audited; self-redeem and malformed codes rejected; redeem moves money once; replaying the *same* `Idempotency-Key` returns the original transaction and no second debit; a fresh key against the same code is a legitimate new payment |
+| 7 | Contacts, goals, insights, notifications | duplicate/self contact rejected; goal deposits debit the balance, write a `SAVINGS` ledger row, complete at target, notify, then refuse further deposits; insights aggregate categories with percentages summing to ~100; `read-all` clears the unread badge |
+| 8 | Pagination & rate limiting | page size + cursor produce disjoint, newest-first pages; limit clamped to 100; `direction=in` returns only credits; 40 rapid writes produce 429s while normal traffic still passes, with a `success:false` body |
+| 9 | Security headers | `helmet` sets `nosniff` + frame options, hides `x-powered-by`, and rate-limit headers are exposed |
+| 10 | Audit trail & admin guard | `ADMIN_RESET` is recorded; reset reseeds the three balances and clears the ledger; when `ADMIN_SECRET` is set, the reset endpoint 403s without the header |
+
+**Frontend manual checks** live in [`09-feature-test-checklist.md`](./09-feature-test-checklist.md).

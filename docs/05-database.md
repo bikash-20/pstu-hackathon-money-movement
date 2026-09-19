@@ -54,5 +54,40 @@ Instead, I maintain a `balance` column on the `User` table and an immutable `Tra
 - `Transaction.idempotencyKey` — UNIQUE. The contract that makes the entire system idempotent under retries. Lookups by key are O(log n).
 - All foreign keys — implicit indexes via Prisma.
 
+## v2 Schema Additions (migration `20260919192331`, `20260920020000`)
+
+**Columns**
+
+| Table | Column | Why |
+|---|---|---|
+| `User` | `dailySpent Int`, `dailyWindow String` | daily spend circuit-breaker. `dailyWindow` is `"YYYY-MM-DD"` in `WALLET_TIMEZONE` (default Asia/Dhaka); the tally only counts when the key equals today's key, so rollover is exact string equality — no timestamp/timezone arithmetic. See `06-decisions.md` Decision 6. |
+| `Transaction` | `memo String?`, `category String @default("TRANSFER")` | free-form note (app-capped at 140 chars) + spending-insights bucket |
+| `MoneyRequest` | `note String?`, `expiresAt DateTime` | optional message and 7-day auto-expiry (`EXPIRED` status enforced lazily on read and at pay time) |
+
+**Indexes** — `Transaction @@index([senderId, createdAt])`,
+`@@index([receiverId, createdAt])`, `@@index([category])` (history pagination and
+insights), `MoneyRequest @@index([payerId, status])` /
+`@@index([requesterId, status])` (inbox queries).
+
+**New tables**
+
+| Table | Purpose |
+|---|---|
+| `Contact` | saved payees, unique per `(ownerId, contactId)`, cascades on owner delete |
+| `Goal` | savings jars; `savedAmount`/`targetAmount` in cents, `completedAt` set on completion |
+| `Notification` | in-app inbox (`kind`, `title`, `body`, `read`), cascades on user delete |
+| `AuditLog` | append-only ops trail (`ADMIN_RESET`, `QR_ISSUE`); `actorId` is `SetNull` so entries survive user deletes |
+
+**Statuses** — `Transaction.status` additionally carries
+`SCHEDULED:<iso-datetime>` rows (scheduled-transfer outbox; no money in flight
+until settled) and `MoneyRequest.status` carries `EXPIRED`.
+
 ## Migrations
-Migrations are managed by Prisma and live in `backend/prisma/migrations/`. The current state is one migration (`20260829035912_init`) that creates all three tables, the unique index, and the foreign-key constraints. Production is updated by the Render build command: `npm install && npx prisma generate && npx prisma migrate deploy`.
+Migrations are managed by Prisma and live in `backend/prisma/migrations/`:
+
+1. `20260829035912_init` — three core tables, unique idempotency index, FKs
+2. `20260829080000_add_user_phone` — cosmetic mock phone number
+3. `20260919192331_fintech_v2_free_features` — v2 tables/columns/indexes above
+4. `20260920020000_daily_window_key` — replaces `dailySpentAt` with the `dailyWindow` day key (Decision 6)
+
+Production is updated by the Render build command: `npm install && npx prisma generate && npx prisma migrate deploy`.

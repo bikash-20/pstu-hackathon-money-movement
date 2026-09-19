@@ -188,4 +188,88 @@ All endpoints are prefixed with `/api`. The frontend normalizes `NEXT_PUBLIC_API
       ]
     }
     ```
-*   **Note:** Unauthenticated by design — Render's free tier does not provide a shell, so the team uses this endpoint as the only practical reset mechanism. See `06-decisions.md` Decision 5 for reasoning.
+*   **Note:** Unauthenticated by design — Render's free tier does not provide a shell, so the team uses this endpoint as the only practical reset mechanism. See `06-decisions.md` Decision 5 for reasoning. When `ADMIN_SECRET` is configured, the endpoint requires `x-admin-secret` and returns `403` otherwise (Decision 7-era hardening).
+
+---
+
+# v2 Additions
+
+## Response envelope (breaking-ish change, applied 2026-09-20)
+Every 4xx/5xx now returns `{ "success": false, "error": "…" }` instead of a bare
+`{ "error": "…" }`, so clients can branch on one field. Success responses were
+already `{ success: true, … }` and are unchanged. See `06-decisions.md`
+Decision 8.
+
+Global guards:
+*   `helmet` security headers on every response; `x-powered-by` hidden.
+*   **Rate limits** — `express-rate-limit` with `trust proxy`:
+    *   money writes (`/transfer`, `/request`, `/split`, `/scheduled`, `/qr`): **30/min** per `clientIp:userId`
+    *   everything else: **120/min** per IP
+    *   429 bodies use the same `{ success: false, error }` envelope.
+*   **Spend ceilings** — `MAX_TRANSFER_CENTS` (৳50,000) per transfer and
+    `DAILY_LIMIT_CENTS` (৳200,000) per settlement day per user, enforced inside
+    the locked DB transaction. `WALLET_TIMEZONE` (default `Asia/Dhaka`) defines
+    the day; see `06-decisions.md` Decision 6.
+
+## 10. Scheduled Transfers (outbox pattern)
+*   **POST** `/scheduled` — Headers: `Idempotency-Key` (required). Body: `{ senderId, receiverId, amount, executeAt }` (ISO datetime, must be in the future).
+*   Writes a `Transaction` row with `status = "SCHEDULED:<iso>"`. **No money moves yet** — the intent is on the ledger and auditable.
+*   **POST** `/scheduled/settle` — settles every due row: one atomic transaction per row (lock → balance check → debit/credit → `status = "COMPLETED"` → notify). Rows that fail (e.g. insufficient funds at settle time) are skipped, not half-applied. Call from a cron worker or the demo "Settle due" button.
+*   **GET** `/scheduled/:userId` — the caller's pending intents.
+*   **Errors:** past/invalid `executeAt`, duplicate key (`P2002` → cached replay).
+
+## 11. QR Pay-Codes
+*   **POST** `/qr/issue` — Body: `{ receiverId, amount }`. Returns a self-contained string
+    `pstuqr.<receiverId>.<amountCents>.<nonce>` plus the receiver name. No image
+    vendor needed — the frontend renders/scans the string. Issuance is written to
+    `AuditLog` (`QR_ISSUE`).
+*   **POST** `/qr/redeem` — Headers: `Idempotency-Key` (required). Body: `{ senderId, code, memo? }`.
+    Same ACID path as a transfer (lock, balance check, atomic debit/credit, ledger
+    row, notification). Rejects self-payment and malformed codes.
+*   **Semantics:** the *key* is single-use, the *code* is not — redeeming the same
+    code with a fresh key is a new payment. Replaying the same key is a cached no-op.
+
+## 12. Saved Payees
+*   **GET** `/contacts/:ownerId` — saved contacts enriched with `{ id, name, phone }`.
+*   **POST** `/contacts` — Body: `{ ownerId, contactId, nickname? }`. Unique per
+    (owner, contact); self-add rejected.
+*   **DELETE** `/contacts/:id`.
+
+## 13. Savings Goals
+*   **GET** `/goals/:userId`, **POST** `/goals` — Body: `{ userId, name, targetAmount }`.
+*   **POST** `/goals/:id/deposit` — Headers: `Idempotency-Key`. Body: `{ userId, amount }`.
+    Debits the spendable balance, writes a self-transfer `Transaction` row with
+    `category = "SAVINGS"` (the ledger stays complete), marks the goal `completedAt`
+    when the target is reached and notifies the owner. Completed goals refuse
+    further deposits.
+
+## 14. Insights
+*   **GET** `/insights/:userId?days=30` — outgoing `COMPLETED` activity bucketed by
+    `category`: `{ userId, days, totalOut, count, breakdown: [{ category, total, count, pct }] }`.
+
+## 15. Notifications
+*   **GET** `/notifications/:userId?unread=1` — last 50, newest first.
+*   **POST** `/notifications/:id/read`, **POST** `/notifications/:userId/read-all`.
+*   Kinds: `TRANSFER_IN`, `TRANSFER_OUT`, `REQUEST_IN`, `REQUEST_PAID`, `SPLIT_IN`, `GOAL_DONE`, `SYSTEM`.
+
+## 16. Transaction History (upgraded)
+*   **GET** `/transactions/:userId?limit&cursor&direction&category&q`
+    *   `limit` (default 50, clamped to 100), `cursor` (keyset pagination — pass
+        `nextCursor` from the previous page), `direction` = `all|in|out`,
+        `category` = one of the ten categories or `ALL`, `q` = case-insensitive
+        memo substring.
+    *   **Response:** `{ items: TransactionRow[], nextCursor: number|null }`
+        (only `COMPLETED` rows; scheduled intents live under `/scheduled`).
+    *   Backed by `@@index([senderId, createdAt])` / `@@index([receiverId, createdAt])`.
+
+## 17. Money Requests (upgraded)
+*   **POST** `/request` — Body: `{ requesterId, payerId, amount, note? }`. Rows carry
+    `expiresAt` (default now + 7 days, `requestExpiryDays`).
+*   **GET** `/requests/:userId` — pending inbox; lazily flips anything past
+    `expiresAt` to `EXPIRED` before returning.
+*   **GET** `/requests-out/:userId` — requests the caller made, with an `expired`
+    flag for tracking.
+*   **POST** `/request/:id/reject` — Body: `{ payerId }`. Sets `REJECTED` (only the
+    named payer, only while `PENDING`). A rejected request can never be paid.
+*   **POST** `/request/:id/pay` — unchanged behaviour, plus expiry enforcement
+    (`Request has expired`) and daily-limit accounting.

@@ -1,31 +1,44 @@
 import { Router } from "express";
 import type { PrismaClient } from "@prisma/client";
-import { requireIdempotency } from "../middleware.js";
+import { fail, requireIdempotency } from "../middleware.js";
 import { assertDailyLimit, bumpDailySpent, fmtBDT, lockUser, notify } from "../money.js";
 import { config } from "../config.js";
+import { z } from "zod";
 
 /** QR pay codes without any image vendor: the payload
  *  "pstuqr.<receiverId>.<amount>.<nonce>" is rendered by the frontend as a
  *  copyable code and redeemed here with the same ACID guarantees as transfer. */
+
+// Inline Zod schema for /issue: keep it close to the route that uses it.
+const qrIssueSchema = z.object({
+  receiverId: z.number().int().positive(),
+  amount: z.number().int().positive().max(100_000_000),
+});
+
 export function qrRouter(prisma: PrismaClient): Router {
   const r = Router();
 
   r.post("/issue", async (req, res) => {
-    const receiverId = Number(req.body.receiverId);
-    const amount = Number(req.body.amount);
-    if (!Number.isInteger(receiverId) || receiverId <= 0 || !Number.isInteger(amount) || amount <= 0) {
-      res.status(400).json({ error: "receiverId and positive integer amount are required" });
+    // Zod gives us a uniform error path and rejects NaN / strings / arrays.
+    const parsed = qrIssueSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      fail(res, 400, `${first?.path.join(".") || "body"}: ${first?.message ?? "Invalid request body"}`);
       return;
     }
+    const { receiverId, amount } = parsed.data;
+
     if (amount > config.maxTransferCents) {
-      res.status(400).json({ error: `Amount exceeds per-transfer cap of ${fmtBDT(config.maxTransferCents)}` });
+      fail(res, 400, `Amount exceeds per-transfer cap of ${fmtBDT(config.maxTransferCents)}`);
       return;
     }
     const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
     if (!receiver) {
-      res.status(400).json({ error: "Receiver not found" });
+      fail(res, 400, "Receiver not found");
       return;
     }
+    // Nonce: 8 chars of base36 ≈ 41 bits of entropy; QR codes are short-lived,
+    // so this is enough to make accidental collisions vanishingly rare.
     const nonce = Math.random().toString(36).slice(2, 10);
     const code = `pstuqr.${receiverId}.${amount}.${nonce}`;
     await prisma.auditLog.create({ data: { actorId: receiverId, action: "QR_ISSUE", detail: code } });
@@ -34,18 +47,32 @@ export function qrRouter(prisma: PrismaClient): Router {
 
   r.post("/redeem", requireIdempotency, async (req, res) => {
     const idempotencyKey = req.headers["idempotency-key"] as string;
-    const code = String(req.body.code ?? "");
-    const senderId = Number(req.body.senderId);
-    const memo = typeof req.body.memo === "string" ? req.body.memo.slice(0, 140) : undefined;
-    const m = /^pstuqr\.(\d+)\.(\d+)\.([a-z0-9]{6,10})$/.exec(code.trim());
-    if (!m || !Number.isInteger(senderId) || senderId <= 0) {
-      res.status(400).json({ error: "Invalid code or senderId" });
+
+    // Validate code/senderId/memo via Zod (uniform error shape across all
+    // money routes). `code` is a string payload, so a small object schema
+    // is enough.
+    const qrRedeemSchema = z.object({
+      senderId: z.number().int().positive(),
+      code: z.string().trim().min(1).max(64),
+      memo: z.string().trim().max(140).optional(),
+    });
+    const parsed = qrRedeemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      fail(res, 400, `${first?.path.join(".") || "body"}: ${first?.message ?? "Invalid request body"}`);
+      return;
+    }
+    const { senderId, code, memo } = parsed.data;
+
+    const m = /^pstuqr\.(\d+)\.(\d+)\.([a-z0-9]{6,10})$/.exec(code);
+    if (!m) {
+      fail(res, 400, "Invalid code or senderId");
       return;
     }
     const receiverId = Number(m[1]);
     const amount = Number(m[2]);
     if (senderId === receiverId) {
-      res.status(400).json({ error: "Cannot pay yourself via QR" });
+      fail(res, 400, "Cannot pay yourself via QR");
       return;
     }
     try {
@@ -77,7 +104,7 @@ export function qrRouter(prisma: PrismaClient): Router {
         res.json({ success: true, message: "Returned cached result (concurrent replay)" });
         return;
       }
-      res.status(400).json({ error: err?.message ?? "QR redeem failed" });
+      fail(res, 400, err?.message ?? "QR redeem failed");
     }
   });
 
