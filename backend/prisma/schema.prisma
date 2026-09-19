@@ -13,8 +13,10 @@ model User {
   balance   Int      @default(10000000) // 100,000 BDT in cents
   // Mock bKash/Nagad-style phone number, purely cosmetic.
   // Format: "+880 1XXX-XXXXXX" (Bangladesh country code + mobile prefix).
-  // Not used for auth or lookup — display only.
   phone     String?
+  // Daily transfer circuit-breaker: reset every UTC day.
+  dailySpent   Int      @default(0)
+  dailySpentAt DateTime @default(now())
   createdAt DateTime @default(now())
 
   sentTransactions     Transaction[]  @relation("SentTransactions")
@@ -22,6 +24,11 @@ model User {
 
   requestsMade         MoneyRequest[] @relation("RequestsMade")
   requestsReceived     MoneyRequest[] @relation("RequestsReceived")
+
+  contactsOwned  Contact[] @relation("ContactsOwned")
+  goals          Goal[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
 }
 
 model Transaction {
@@ -31,10 +38,18 @@ model Transaction {
   amount         Int      // in cents
   status         String   @default("COMPLETED") // COMPLETED, FAILED
   idempotencyKey String   @unique
+  // Free-form memo / note attached by the sender (max 140 chars, app-enforced).
+  memo           String?
+  // Denormalized category chosen by the sender for spending insights.
+  category       String   @default("TRANSFER")
   createdAt      DateTime @default(now())
 
   sender   User @relation("SentTransactions", fields: [senderId], references: [id])
   receiver User @relation("ReceivedTransactions", fields: [receiverId], references: [id])
+
+  @@index([senderId, createdAt])
+  @@index([receiverId, createdAt])
+  @@index([category])
 }
 
 model MoneyRequest {
@@ -42,9 +57,74 @@ model MoneyRequest {
   requesterId Int
   payerId     Int
   amount      Int      // in cents
-  status      String   @default("PENDING") // PENDING, PAID, REJECTED
+  status      String   @default("PENDING") // PENDING, PAID, REJECTED, EXPIRED
+  note        String?
+  // Requests auto-expire 7 days after creation (enforced lazily on read + pay).
+  expiresAt   DateTime @default(dbgenerated("NOW() + INTERVAL '7 days'"))
   createdAt   DateTime @default(now())
 
   requester User @relation("RequestsMade", fields: [requesterId], references: [id])
   payer     User @relation("RequestsReceived", fields: [payerId], references: [id])
+
+  @@index([payerId, status])
+  @@index([requesterId, status])
 }
+
+// Saved payees — one row per (owner, contact) pair.
+model Contact {
+  id        Int      @id @default(autoincrement())
+  ownerId   Int
+  contactId Int
+  nickname  String?
+  createdAt DateTime @default(now())
+
+  owner User @relation("ContactsOwned", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, contactId])
+  @@index([ownerId])
+}
+
+// Savings goals: money earmarked out of the spendable balance.
+model Goal {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  name        String
+  targetAmount Int     // cents
+  savedAmount  Int     @default(0) // cents
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// In-app notification inbox (no external SMS/push vendor needed).
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  kind      String   // TRANSFER_IN, TRANSFER_OUT, REQUEST_IN, REQUEST_PAID, SPLIT_IN, GOAL_DONE, SYSTEM
+  title     String
+  body      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+}
+
+// Append-only security / ops audit trail (admin resets, rate-limit hits are
+// application-logged; money movements are already in Transaction).
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  actorId   Int?
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt])
+}
+

@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   description: "Reliable, concurrent digital wallet for the PSTU IT Carnival 2026 hackathon",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
