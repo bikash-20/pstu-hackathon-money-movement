@@ -28,7 +28,10 @@ export function contactsRouter(prisma: PrismaClient): Router {
       return;
     }
     try {
-      const contact = await prisma.contact.create({ data: parsed.value });
+      const { ownerId, contactId, nickname } = parsed.value;
+      const contact = await prisma.contact.create({
+        data: { ownerId, contactId, nickname: nickname ?? null },
+      });
       res.json({ success: true, contact });
     } catch (error: unknown) {
       const err = error as { code?: string };

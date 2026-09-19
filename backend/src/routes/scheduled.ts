@@ -9,6 +9,22 @@ import { assertDailyLimit, bumpDailySpent, fmtBDT, lockUser, notify } from "../m
 export function scheduledRouter(prisma: PrismaClient): Router {
   const r = Router();
 
+  r.get("/:userId", async (req, res) => {
+    const userId = Number(req.params.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      res.status(400).json({ error: "Invalid user id" });
+      return;
+    }
+    res.json(
+      await prisma.transaction.findMany({
+        where: { senderId: userId, status: { startsWith: "SCHEDULED:" } },
+        orderBy: { id: "desc" },
+        take: 20,
+        include: { receiver: { select: { id: true, name: true } } },
+      })
+    );
+  });
+
   r.post("/", requireIdempotency, async (req, res) => {
     const idempotencyKey = req.headers["idempotency-key"] as string;
     const parsed = parse(scheduleSchema, req.body);

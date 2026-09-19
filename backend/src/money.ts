@@ -52,7 +52,7 @@ export async function notify(
   title: string,
   body?: string | null
 ): Promise<void> {
-  await tx.notification.create({ data: { userId, kind, title, body } });
+  await tx.notification.create({ data: { userId, kind, title, body: body ?? null } });
 }
 
 export function fmtBDT(cents: number): string {
